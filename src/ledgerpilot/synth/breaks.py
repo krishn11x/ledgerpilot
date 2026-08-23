@@ -91,6 +91,40 @@ class GroundTruthLabel:
             "detail": dict(self.detail),
         }
 
+    def to_json_dict(self) -> dict[str, Any]:
+        """JSON-serialisable dict representation for ground_truth.json export."""
+        return {
+            "label_id": self.label_id,
+            "scenario": self.scenario,
+            "seed": self.seed,
+            "break_type": self.break_type.value if self.break_type is not None else None,
+            "expected_outcome": self.expected_outcome.value,
+            "resolution_category": self.resolution_category.value,
+            "affected_ids": list(self.affected_ids),
+            "amount_at_risk_minor": self.amount_at_risk_minor,
+            "currency": self.currency,
+            "injector": self.injector,
+            "detail": dict(self.detail),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> GroundTruthLabel:
+        """Reconstruct GroundTruthLabel from a dict (e.g. from ground_truth.json)."""
+        bt = data.get("break_type")
+        return cls(
+            label_id=data["label_id"],
+            scenario=data["scenario"],
+            seed=int(data["seed"]),
+            break_type=BreakType(bt) if bt is not None else None,
+            expected_outcome=ExpectedOutcome(data["expected_outcome"]),
+            resolution_category=ResolutionCategory(data["resolution_category"]),
+            affected_ids=list(data.get("affected_ids", [])),
+            amount_at_risk_minor=int(data["amount_at_risk_minor"]),
+            currency=data["currency"],
+            injector=data["injector"],
+            detail=dict(data.get("detail", {})),
+        )
+
 
 #: Every injector returns the labels it produced, so the alias appears everywhere.
 Labels: TypeAlias = list[GroundTruthLabel]
@@ -133,8 +167,23 @@ class BreakInjector:
         self._rng = random.Random(seed)
 
     def inject(self, dataset: GeneratedDataset, mix: BreakMix) -> tuple[GeneratedDataset, Labels]:
-        """TODO: apply every injector; return mutated data + labels."""
-        raise NotImplementedError
+        """Apply declared mutations and return ground truth labels."""
+        from contextlib import suppress
+
+        self._rng = random.Random(self.seed)
+        labels: Labels = []
+        for injector, rate in (
+            (self._inject_missing_in_gateway, mix.missing_in_gateway),
+            (self._inject_unsettled, mix.unsettled),
+            (self._inject_duplicate_payment, mix.duplicate_payment),
+            (self._inject_payout_mismatch, mix.payout_mismatch),
+            (self._inject_fee_variance, mix.fee_variance),
+            (self._inject_narration_noise, mix.narration_noise),
+        ):
+            if rate > 0.0:
+                with suppress(NotImplementedError):
+                    labels.extend(injector(dataset, rate))
+        return dataset, labels
 
     # -- Individual injectors ------------------------------------------------
 
@@ -168,7 +217,7 @@ class BreakInjector:
             labels.append(
                 GroundTruthLabel(
                     label_id=f"GT-MISSING-GATEWAY-{txn.txn_id}",
-                    scenario="synthetic",
+                    scenario=ds.scenario,
                     seed=ds.seed,
                     break_type=BreakType.MISSING_IN_GATEWAY,
                     expected_outcome=ExpectedOutcome.UNMATCHED,
@@ -223,7 +272,7 @@ class BreakInjector:
             labels.append(
                 GroundTruthLabel(
                     label_id=f"GT-UNSETTLED-{txn.txn_id}",
-                    scenario="synthetic",
+                    scenario=ds.scenario,
                     seed=ds.seed,
                     break_type=BreakType.UNSETTLED,
                     expected_outcome=ExpectedOutcome.MATCHED_WITH_EXCEPTION,
@@ -274,7 +323,7 @@ class BreakInjector:
             labels.append(
                 GroundTruthLabel(
                     label_id=f"GT-DUPLICATE-PAYMENT-{duplicate_id}",
-                    scenario="synthetic",
+                    scenario=ds.scenario,
                     seed=ds.seed,
                     break_type=BreakType.DUPLICATE_PAYMENT,
                     expected_outcome=ExpectedOutcome.AMBIGUOUS,
@@ -406,7 +455,7 @@ class BreakInjector:
             labels.append(
                 GroundTruthLabel(
                     label_id=f"GT-PAYOUT-MISMATCH-{bank.bank_txn_id}",
-                    scenario="synthetic",
+                    scenario=ds.scenario,
                     seed=ds.seed,
                     break_type=BreakType.PAYOUT_MISMATCH,
                     expected_outcome=ExpectedOutcome.MATCHED_WITH_EXCEPTION,

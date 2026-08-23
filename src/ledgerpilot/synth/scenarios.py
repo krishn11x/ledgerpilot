@@ -7,9 +7,13 @@ regression tests (a match-rate drop on ``baseline`` fails CI).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
-from ledgerpilot.synth.breaks import BreakMix
+from ledgerpilot.config import SYNTHETIC_DIR
+from ledgerpilot.synth.breaks import BreakInjector, BreakMix
+from ledgerpilot.synth.generator import SyntheticGenerator, write_dataset
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,10 +89,39 @@ SCENARIOS: dict[str, Scenario] = {
 
 
 def get_scenario(name: str) -> Scenario:
-    """TODO: lookup with a helpful error listing valid names."""
-    raise NotImplementedError
+    """Lookup a named scenario with a helpful error listing valid names."""
+    if name not in SCENARIOS:
+        valid = ", ".join(sorted(SCENARIOS.keys()))
+        raise KeyError(f"Unknown scenario {name!r}. Valid scenarios are: {valid}")
+    return SCENARIOS[name]
 
 
-def materialize(name: str) -> dict[str, str]:
-    """TODO: generate, inject, write CSVs + ground truth; return file paths."""
-    raise NotImplementedError
+def materialize(
+    name: str,
+    *,
+    seed: int | None = None,
+    out_dir: Path | None = None,
+) -> dict[str, str]:
+    """Generate synthetic data, inject breaks, write CSVs + ground truth JSON, and return paths."""
+    scenario = get_scenario(name)
+    used_seed = scenario.seed if seed is None else seed
+    target_dir = out_dir if out_dir is not None else (SYNTHETIC_DIR / scenario.name)
+
+    generator = SyntheticGenerator(
+        seed=used_seed,
+        period_days=scenario.period_days,
+        scenario=scenario.name,
+    )
+    clean_ds = generator.generate(order_count=scenario.order_count)
+
+    injector = BreakInjector(seed=used_seed)
+    mutated_ds, labels = injector.inject(clean_ds, scenario.mix)
+
+    written = write_dataset(mutated_ds, target_dir)
+
+    gt_path = target_dir / "ground_truth.json"
+    gt_rows = [label.to_json_dict() for label in labels]
+    gt_path.write_text(json.dumps(gt_rows, indent=2) + "\n", encoding="utf-8")
+    written["ground_truth"] = gt_path
+
+    return {k: str(v) for k, v in written.items()}

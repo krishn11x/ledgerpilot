@@ -102,6 +102,7 @@ class GeneratedDataset:
     seed: int
     period_start: date
     period_end: date
+    scenario: str = "synthetic"
 
 
 def narration_templates() -> list[str]:
@@ -140,9 +141,11 @@ class SyntheticGenerator:
         fee: FeeSchedule | None = None,
         period_end: date | None = None,
         fx_share: float = 0.08,
+        scenario: str = "synthetic",
     ) -> None:
         self.seed = seed
         self.period_days = period_days
+        self.scenario = scenario
         self.rng = random.Random(seed)
         self.fee = fee or FeeSchedule(
             bps=settings.gateway_fee_bps,
@@ -163,7 +166,7 @@ class SyntheticGenerator:
 
     # -- Public -------------------------------------------------------------
 
-    def generate(self, *, order_count: int) -> GeneratedDataset:
+    def generate(self, *, order_count: int, scenario: str | None = None) -> GeneratedDataset:
         """Produce a perfectly reconciling dataset.
 
         "Perfectly" is checkable and is checked: for every payout, the sum of
@@ -186,6 +189,7 @@ class SyntheticGenerator:
             seed=self.seed,
             period_start=self.period_start,
             period_end=self.period_end,
+            scenario=scenario if scenario is not None else self.scenario,
         )
 
     # -- Stages -------------------------------------------------------------

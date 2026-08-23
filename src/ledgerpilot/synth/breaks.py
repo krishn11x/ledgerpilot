@@ -12,10 +12,12 @@ than exposing it.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
-from ledgerpilot.domain.enums import BreakType, ExpectedOutcome, ResolutionCategory
+from ledgerpilot.domain.enums import BreakType, ExpectedOutcome, ResolutionCategory, TxnDirection
+from ledgerpilot.domain.models import BankTxn, GatewayTxn, PayoutBatch
 from ledgerpilot.synth.generator import GeneratedDataset
 
 
@@ -128,6 +130,7 @@ class BreakInjector:
 
     def __init__(self, *, seed: int) -> None:
         self.seed = seed
+        self._rng = random.Random(seed)
 
     def inject(self, dataset: GeneratedDataset, mix: BreakMix) -> tuple[GeneratedDataset, Labels]:
         """TODO: apply every injector; return mutated data + labels."""
@@ -136,8 +139,53 @@ class BreakInjector:
     # -- Individual injectors ------------------------------------------------
 
     def _inject_missing_in_gateway(self, ds: GeneratedDataset, rate: float) -> Labels:
-        """TODO: delete gateway txns for paid orders."""
-        raise NotImplementedError
+        """Remove captured transactions while preserving their payout settlement.
+
+        The missing record is deliberately removed only from a payout that has
+        at least two transactions.  The payout and its bank credit are reduced
+        by the removed transaction's net amount; otherwise this injector would
+        accidentally manufacture an unlabelled ``PAYOUT_MISMATCH`` alongside
+        the intended order-to-gateway presence break.
+        """
+        candidates = self._settled_base_currency_candidates(ds)
+        labels: Labels = []
+
+        for txn, payout, bank in self._select(candidates, rate):
+            ds.gateway_txns.remove(txn)
+            self._replace_payout(
+                ds,
+                payout.model_copy(
+                    update={
+                        "expected_net_minor": payout.expected_net_minor - txn.net_minor,
+                        "txn_count": payout.txn_count - 1,
+                    }
+                ),
+            )
+            self._replace_bank(
+                ds,
+                bank.model_copy(update={"amount_minor": bank.amount_minor - txn.net_minor}),
+            )
+            labels.append(
+                GroundTruthLabel(
+                    label_id=f"GT-MISSING-GATEWAY-{txn.txn_id}",
+                    scenario="synthetic",
+                    seed=ds.seed,
+                    break_type=BreakType.MISSING_IN_GATEWAY,
+                    expected_outcome=ExpectedOutcome.UNMATCHED,
+                    resolution_category=ResolutionCategory.INVESTIGATE,
+                    affected_ids=self._affected_ids(txn, payout, bank),
+                    amount_at_risk_minor=txn.gross_minor,
+                    currency=txn.currency,
+                    injector="missing_in_gateway",
+                    detail={
+                        "removed_gateway_txn_id": txn.txn_id,
+                        "order_id": txn.order_ref or "",
+                        "payout_resynchronised": "true",
+                    },
+                )
+            )
+
+        return labels
 
     def _inject_fee_variance(self, ds: GeneratedDataset, rate: float) -> Labels:
         """TODO: perturb fee_minor so net no longer matches the schedule.
@@ -148,8 +196,145 @@ class BreakInjector:
         raise NotImplementedError
 
     def _inject_duplicate_payment(self, ds: GeneratedDataset, rate: float) -> Labels:
-        """TODO: clone a gateway txn with a new id, same order_ref."""
-        raise NotImplementedError
+        """Add a second capture for an order and include it in settlement.
+
+        The duplicate has a new immutable gateway identifier but retains the
+        order reference and captured amount.  Updating the payout and bank
+        credit keeps the aggregate settlement true, leaving exactly the
+        intended two-captures-for-one-order anomaly.
+        """
+        candidates = self._settled_base_currency_candidates(ds)
+        labels: Labels = []
+
+        for index, (txn, payout, bank) in enumerate(self._select(candidates, rate), start=1):
+            duplicate_id = f"PAY-DUP-{txn.txn_id.removeprefix('PAY-')}-{index:04d}"
+            duplicate = txn.model_copy(update={"txn_id": duplicate_id})
+            ds.gateway_txns.append(duplicate)
+            self._replace_payout(
+                ds,
+                payout.model_copy(
+                    update={
+                        "expected_net_minor": payout.expected_net_minor + duplicate.net_minor,
+                        "txn_count": payout.txn_count + 1,
+                    }
+                ),
+            )
+            self._replace_bank(
+                ds,
+                bank.model_copy(
+                    update={"amount_minor": bank.amount_minor + duplicate.net_minor}
+                ),
+            )
+            labels.append(
+                GroundTruthLabel(
+                    label_id=f"GT-DUPLICATE-PAYMENT-{duplicate_id}",
+                    scenario="synthetic",
+                    seed=ds.seed,
+                    break_type=BreakType.DUPLICATE_PAYMENT,
+                    expected_outcome=ExpectedOutcome.AMBIGUOUS,
+                    resolution_category=ResolutionCategory.ESCALATE_HUMAN,
+                    affected_ids=[*self._affected_ids(txn, payout, bank), duplicate_id],
+                    amount_at_risk_minor=duplicate.gross_minor,
+                    currency=duplicate.currency,
+                    injector="duplicate_payment",
+                    detail={
+                        "original_gateway_txn_id": txn.txn_id,
+                        "duplicate_gateway_txn_id": duplicate_id,
+                        "order_id": txn.order_ref or "",
+                        "payout_resynchronised": "true",
+                    },
+                )
+            )
+
+        return labels
+
+    def _settled_base_currency_candidates(
+        self, ds: GeneratedDataset
+    ) -> list[tuple[GatewayTxn, PayoutBatch, BankTxn]]:
+        """Return candidates whose payout has a directly comparable bank credit.
+
+        USD payouts settle into the INR account via the generator's private FX
+        helper.  This narrow chunk avoids duplicating that formula by operating
+        only on same-currency settlement groups.  The standard generator has
+        abundant INR records, and later FX-specific injection owns converted
+        payouts.
+        """
+        payout_by_id = {payout.payout_id: payout for payout in ds.payouts}
+        counts_by_payout: dict[str, int] = {}
+        for txn in ds.gateway_txns:
+            if txn.payout_id is not None:
+                counts_by_payout[txn.payout_id] = counts_by_payout.get(txn.payout_id, 0) + 1
+
+        candidates: list[tuple[GatewayTxn, PayoutBatch, BankTxn]] = []
+        for txn in ds.gateway_txns:
+            if txn.status != "captured" or txn.payout_id is None:
+                continue
+            if counts_by_payout[txn.payout_id] < 2:
+                continue
+            payout = payout_by_id[txn.payout_id]
+            matching_banks = [
+                bank
+                for bank in ds.bank_txns
+                if bank.direction is TxnDirection.CREDIT
+                and bank.value_date == payout.settled_on
+                and bank.currency == txn.currency
+                and bank.amount_minor == payout.expected_net_minor
+            ]
+            if len(matching_banks) == 1:
+                candidates.append((txn, payout, matching_banks[0]))
+        return candidates
+
+    def _select(
+        self, candidates: list[tuple[GatewayTxn, PayoutBatch, BankTxn]], rate: float
+    ) -> list[tuple[GatewayTxn, PayoutBatch, BankTxn]]:
+        """Pick a deterministic, non-empty sample for a positive rate."""
+        if not 0.0 <= rate <= 1.0:
+            raise ValueError(f"break rate must be between 0 and 1, got {rate}")
+        if rate == 0.0 or not candidates:
+            return []
+        # One target per payout keeps every replacement based on a current
+        # payout total. Selecting two records from the same batch would make
+        # the second replacement overwrite the first adjustment.
+        target = min(
+            len({payout.payout_id for _, payout, _ in candidates}),
+            max(1, round(len(candidates) * rate)),
+        )
+        selected: list[tuple[GatewayTxn, PayoutBatch, BankTxn]] = []
+        seen_payouts: set[str] = set()
+        for candidate in self._rng.sample(candidates, k=len(candidates)):
+            if candidate[1].payout_id not in seen_payouts:
+                selected.append(candidate)
+                seen_payouts.add(candidate[1].payout_id)
+            if len(selected) == target:
+                break
+        return selected
+
+    @staticmethod
+    def _affected_ids(txn: GatewayTxn, payout: PayoutBatch, bank: BankTxn) -> list[str]:
+        """Return the real cross-ledger identifiers touched by an injector."""
+        return [
+            value
+            for value in (txn.order_ref, txn.txn_id, payout.payout_id, bank.bank_txn_id)
+            if value is not None
+        ]
+
+    @staticmethod
+    def _replace_payout(ds: GeneratedDataset, replacement: PayoutBatch) -> None:
+        """Replace one immutable payout by primary key."""
+        for index, payout in enumerate(ds.payouts):
+            if payout.payout_id == replacement.payout_id:
+                ds.payouts[index] = replacement
+                return
+        raise LookupError(f"payout not found: {replacement.payout_id}")
+
+    @staticmethod
+    def _replace_bank(ds: GeneratedDataset, replacement: BankTxn) -> None:
+        """Replace one immutable bank line by primary key."""
+        for index, bank in enumerate(ds.bank_txns):
+            if bank.bank_txn_id == replacement.bank_txn_id:
+                ds.bank_txns[index] = replacement
+                return
+        raise LookupError(f"bank transaction not found: {replacement.bank_txn_id}")
 
     def _inject_payout_mismatch(self, ds: GeneratedDataset, rate: float) -> Labels:
         """TODO: perturb a bank credit so the batch no longer proves out."""

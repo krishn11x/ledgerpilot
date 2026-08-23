@@ -13,23 +13,81 @@ than exposing it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
-from ledgerpilot.domain.enums import BreakType
+from ledgerpilot.domain.enums import BreakType, ExpectedOutcome, ResolutionCategory
 from ledgerpilot.synth.generator import GeneratedDataset
 
 
 @dataclass(frozen=True, slots=True)
 class GroundTruthLabel:
-    """The answer key for one injected break."""
+    """The answer key for one injected break.
+
+    Field order mirrors ``store.tables.GroundTruthLabelRow`` column for column,
+    so the two can be diffed by eye when either side changes.
+
+    ``scenario`` and ``seed`` are properties of the dataset rather than of the
+    individual label, and are repeated on every one. That denormalisation is
+    deliberate and matches the table: it lets the evaluation harness filter an
+    answer key by scenario and seed without a join, and it means a label found
+    on its own still says which dataset it belongs to.
+
+    ``break_type`` is nullable. Not every injector creates a break -- narration
+    noise degrades a record while leaving the correct answer a clean match --
+    and recording those as ``UNCLASSIFIED`` would inflate the break count with
+    cases that have nothing to find. ``None`` means "this record was modified
+    and the correct outcome is still a match".
+
+    Labels are **evaluation truth only**. Nothing in ``recon`` or ``agent`` may
+    read them: a rule that consulted the answer key would score perfectly and
+    measure nothing.
+    """
 
     label_id: str
-    break_type: BreakType
+    scenario: str
+    seed: int
+    break_type: BreakType | None
+    expected_outcome: ExpectedOutcome
+    resolution_category: ResolutionCategory
     affected_ids: list[str]
     amount_at_risk_minor: int
     currency: str
     injector: str
     detail: dict[str, str] = field(default_factory=dict)
+
+    def as_row(self) -> dict[str, Any]:
+        """Column mapping for ``store.GroundTruthRepository.bulk_upsert``.
+
+        The repository takes ``Iterable[Any]`` and calls this method rather than
+        importing ``synth``, which would invert the layering -- ``synth`` sits
+        above ``store``. Supplying the mapping from this side keeps the
+        dependency pointing the right way, at the cost of this method having to
+        stay in step with the table by hand.
+
+        Enum members are passed through unconverted. The columns are
+        ``sa.Enum(..., values_callable=...)``, so SQLAlchemy's bind processor
+        turns each member into its lowercase *value*; converting here as well
+        would work by accident (these are ``StrEnum``) but would hide which
+        layer owns the representation.
+
+        ``affected_ids`` and ``detail`` are copied. The dataclass is frozen, but
+        that freezes the *references* -- handing the live list and dict to the
+        ORM would let a later mutation of this label silently change rows that
+        are already staged for insert.
+        """
+        return {
+            "label_id": self.label_id,
+            "scenario": self.scenario,
+            "seed": self.seed,
+            "break_type": self.break_type,
+            "expected_outcome": self.expected_outcome,
+            "resolution_category": self.resolution_category,
+            "affected_ids": list(self.affected_ids),
+            "amount_at_risk_minor": self.amount_at_risk_minor,
+            "currency": self.currency,
+            "injector": self.injector,
+            "detail": dict(self.detail),
+        }
 
 
 #: Every injector returns the labels it produced, so the alias appears everywhere.

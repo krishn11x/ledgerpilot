@@ -46,6 +46,13 @@ data/*.db
 data/*.sqlite
 data/*.sqlite3
 data/*.duckdb
+# SQLite writes -wal and -shm sidecars next to the database. They are pure
+# local runtime state and they churn on every query, so they need their own
+# patterns -- ``data/*.db`` does not match ``data/ledgerpilot.db-wal``.
+data/*.db-wal
+data/*.db-shm
+data/*.sqlite-wal
+data/*.sqlite-shm
 data/exports/
 *.parquet
 

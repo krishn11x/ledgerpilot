@@ -1,0 +1,95 @@
+[project]
+name = "ledgerpilot"
+version = "0.1.0"
+description = "AI Finance Controller for autonomous three-way payment reconciliation"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    # ---- API layer -------------------------------------------------------
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sse-starlette>=2.1.3",
+    "python-multipart>=0.0.12",
+    # ---- Config & validation --------------------------------------------
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    # ---- Persistence (PostgreSQL-ready, SQLite for local dev) -----------
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14.0",
+    "psycopg[binary]>=3.2.3",
+    # ---- Agent layer -----------------------------------------------------
+    "langgraph>=0.2.45",
+    "langgraph-checkpoint-postgres>=2.0.2",
+    "langchain-core>=0.3.15",
+    "langchain-anthropic>=0.3.0",
+    "anthropic>=0.39.0",
+    # ---- Reconciliation & data ------------------------------------------
+    "pandas>=2.2.3",
+    "rapidfuzz>=3.10.1",
+    "python-dateutil>=2.9.0",
+    # ---- Synthetic data --------------------------------------------------
+    "faker>=30.8.0",
+    # ---- CLI & observability --------------------------------------------
+    "typer>=0.13.0",
+    "rich>=13.9.0",
+    "structlog>=24.4.0",
+]
+
+[project.scripts]
+ledgerpilot = "ledgerpilot.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.3",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "httpx>=0.27.2",
+    "ruff>=0.7.3",
+    "mypy>=1.13.0",
+    "types-python-dateutil>=2.9.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ledgerpilot"]
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
+ignore = [
+    "B008", # FastAPI's Depends() in defaults is idiomatic
+    "N818", # exception naming
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["langgraph.*", "faker.*", "rapidfuzz.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+addopts = "-ra -q"

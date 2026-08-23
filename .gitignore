@@ -1,0 +1,86 @@
+# ---------------------------------------------------------------------------
+# Secrets  -- never commit real credentials
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+sdist/
+wheels/
+
+# Virtual environments (uv creates .venv)
+.venv/
+venv/
+env/
+
+# Test & type-check caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# ---------------------------------------------------------------------------
+# Data  -- synthetic data is regenerable; never commit it
+# ---------------------------------------------------------------------------
+data/synthetic/*
+!data/synthetic/.gitkeep
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/*.duckdb
+data/exports/
+*.parquet
+
+# Evaluation artifacts
+artifacts/
+reports/
+
+# ---------------------------------------------------------------------------
+# Notebooks
+# ---------------------------------------------------------------------------
+.ipynb_checkpoints/
+notebooks/**/*.ipynb_checkpoints
+
+# ---------------------------------------------------------------------------
+# Frontend
+# ---------------------------------------------------------------------------
+node_modules/
+web/dist/
+web/build/
+web/.vite/
+web/coverage/
+*.tsbuildinfo
+.eslintcache
+
+# Generated API client -- regenerate with `make client`
+web/src/api/generated.ts
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini

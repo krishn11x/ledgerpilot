@@ -52,25 +52,48 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ledgerpilot.domain.enums import (
+    BreakSeverity,
+    BreakStatus,
     BreakType,
+    DecisionActor,
     ExpectedOutcome,
+    JournalEntryStatus,
+    MatchMethod,
+    MatchStatus,
     ResolutionCategory,
     TxnDirection,
 )
-from ledgerpilot.domain.models import BankTxn, GatewayTxn, Order, PayoutBatch
+from ledgerpilot.domain.models import (
+    BankTxn,
+    Break,
+    GatewayTxn,
+    JournalEntry,
+    Match,
+    MatchLeg,
+    Order,
+    PayoutBatch,
+)
 from ledgerpilot.store.base import Base, TimestampMixin
 
 __all__ = [
+    "AuditEventRow",
     "BankTxnRow",
     "Base",
+    "BreakRow",
     "GatewayTxnRow",
     "GroundTruthLabelRow",
     "IngestRunRow",
+    "JournalEntryRow",
+    "MatchRow",
     "OrderRow",
     "PayoutBatchRow",
     "QuarantinedRowRow",
+    "ReconRunRow",
     "TimestampMixin",
 ]
+
+
+
 
 
 def _enum_column(enum_cls: type, *, name: str) -> Enum:
@@ -386,3 +409,175 @@ class QuarantinedRowRow(Base, TimestampMixin):
     row_number: Mapped[int] = mapped_column(Integer, nullable=False)
     raw: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation and Audit tables
+# ---------------------------------------------------------------------------
+
+
+class MatchRow(Base, TimestampMixin):
+    """Reconciliation match ORM row."""
+
+    __tablename__ = "matches"
+
+    match_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    legs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    method: Mapped[MatchMethod] = mapped_column(
+        _enum_column(MatchMethod, name="match_method"), nullable=False
+    )
+    status: Mapped[MatchStatus] = mapped_column(
+        _enum_column(MatchStatus, name="match_status"), nullable=False
+    )
+    confidence: Mapped[float] = mapped_column(nullable=False, default=1.0)
+    score_breakdown: Mapped[dict[str, float]] = mapped_column(JSON, nullable=False, default=dict)
+    residual_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    @classmethod
+    def values(cls, record: Match) -> dict[str, Any]:
+        return {
+            "match_id": record.match_id,
+            "legs": [leg.model_dump() for leg in record.legs],
+            "method": record.method,
+            "status": record.status,
+            "confidence": record.confidence,
+            "score_breakdown": record.score_breakdown,
+            "residual_minor": record.residual_minor,
+        }
+
+    def to_domain(self) -> Match:
+        return Match(
+            match_id=self.match_id,
+            legs=[MatchLeg(**leg_dict) for leg_dict in self.legs],
+            method=self.method,
+            status=self.status,
+            confidence=self.confidence,
+            score_breakdown=self.score_breakdown,
+            residual_minor=self.residual_minor,
+            created_at=_as_utc(self.created_at),
+        )
+
+
+class BreakRow(Base, TimestampMixin):
+    """Reconciliation exception break ORM row."""
+
+    __tablename__ = "breaks"
+
+    break_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    break_type: Mapped[BreakType] = mapped_column(
+        _enum_column(BreakType, name="break_type_row"), nullable=False, index=True
+    )
+    severity: Mapped[BreakSeverity] = mapped_column(
+        _enum_column(BreakSeverity, name="break_severity"), nullable=False, index=True
+    )
+    status: Mapped[BreakStatus] = mapped_column(
+        _enum_column(BreakStatus, name="break_status"), nullable=False, index=True
+    )
+    amount_at_risk_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    legs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    detected_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    assignee: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    @classmethod
+    def values(cls, record: Break) -> dict[str, Any]:
+        return {
+            "break_id": record.break_id,
+            "break_type": record.break_type,
+            "severity": record.severity,
+            "status": record.status,
+            "amount_at_risk_minor": record.amount_at_risk_minor,
+            "currency": record.currency,
+            "legs": [leg.model_dump() for leg in record.legs],
+            "detected_by": record.detected_by,
+            "detected_at": record.detected_at,
+            "summary": record.summary,
+            "narrative": record.narrative,
+            "evidence": record.evidence,
+            "assignee": record.assignee,
+        }
+
+    def to_domain(self) -> Break:
+        return Break(
+            break_id=self.break_id,
+            break_type=self.break_type,
+            severity=self.severity,
+            status=self.status,
+            amount_at_risk_minor=self.amount_at_risk_minor,
+            currency=self.currency,
+            legs=[MatchLeg(**leg_dict) for leg_dict in self.legs],
+            detected_by=self.detected_by,
+            detected_at=_as_utc(self.detected_at),
+            summary=self.summary,
+            narrative=self.narrative,
+            evidence=self.evidence,
+            assignee=self.assignee,
+        )
+
+
+class ReconRunRow(Base):
+    """Reconciliation run execution header."""
+
+    __tablename__ = "recon_runs"
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    autonomy_level: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    counts: Mapped[dict[str, int]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class JournalEntryRow(Base, TimestampMixin):
+    """Double-entry journal posting ORM row."""
+
+    __tablename__ = "journal_entries"
+
+    entry_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    break_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    lines: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[JournalEntryStatus] = mapped_column(
+        _enum_column(JournalEntryStatus, name="journal_status"), nullable=False
+    )
+    posting_date: Mapped[date] = mapped_column(Date, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    proposed_by: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    approved_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    @classmethod
+    def values(cls, record: JournalEntry) -> dict[str, Any]:
+        return {
+            "entry_id": record.entry_id,
+            "break_id": record.break_id,
+            "lines": [line.model_dump() for line in record.lines],
+            "status": record.status,
+            "posting_date": record.posting_date,
+            "rationale": record.rationale,
+            "proposed_by": record.proposed_by,
+            "approved_by": record.approved_by,
+        }
+
+
+class AuditEventRow(Base):
+    """Tamper-evident hash-chained audit event ORM row."""
+
+    __tablename__ = "audit_events"
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sequence_number: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, index=True, unique=True
+    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[DecisionActor] = mapped_column(
+        _enum_column(DecisionActor, name="decision_actor"), nullable=False
+    )
+    target_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    prev_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)

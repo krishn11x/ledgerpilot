@@ -39,9 +39,12 @@ from ledgerpilot.domain.models import (
 )
 from ledgerpilot.store.tables import (
     BankTxnRow,
+    BreakRow,
     GatewayTxnRow,
     GroundTruthLabelRow,
     IngestRunRow,
+    JournalEntryRow,
+    MatchRow,
     OrderRow,
     PayoutBatchRow,
     QuarantinedRowRow,
@@ -446,20 +449,43 @@ class IngestRunRepository(_Repository):
 
 
 class MatchRepository(_Repository):
-    """TODO(phase-2). Writes must be idempotent on the content-hashed match_id."""
+    """Writes are idempotent on the content-hashed match_id."""
 
     def upsert(self, match: Match) -> None:
-        raise NotImplementedError
+        values = MatchRow.values(match)
+        row = MatchRow(**values)
+        self.session.merge(row)
+
+    def get(self, match_id: str) -> Match | None:
+        row = self.session.get(MatchRow, match_id)
+        return row.to_domain() if row else None
 
     def for_record(self, record_type: str, record_id: str) -> list[Match]:
-        raise NotImplementedError
+        statement = select(MatchRow)
+        rows = self.session.scalars(statement).all()
+        result: list[Match] = []
+        for row in rows:
+            for leg in row.legs:
+                if leg.get("record_type") == record_type and leg.get("record_id") == record_id:
+                    result.append(row.to_domain())
+                    break
+        return result
+
+    def count(self) -> int:
+        return self._count(MatchRow)
 
 
 class BreakRepository(_Repository):
-    """TODO(phase-2). Backs the exception queue."""
+    """Backs the exception queue."""
 
     def upsert(self, brk: Break) -> None:
-        raise NotImplementedError
+        values = BreakRow.values(brk)
+        row = BreakRow(**values)
+        self.session.merge(row)
+
+    def get(self, break_id: str) -> Break | None:
+        row = self.session.get(BreakRow, break_id)
+        return row.to_domain() if row else None
 
     def query(
         self,
@@ -470,20 +496,38 @@ class BreakRepository(_Repository):
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[Break], int]:
-        """TODO: return (page, total_count) for the queue."""
-        raise NotImplementedError
+        statement = select(BreakRow)
+        if status is not None:
+            statement = statement.where(BreakRow.status == status)
+        if break_type is not None:
+            statement = statement.where(BreakRow.break_type == break_type)
+        if min_amount_minor is not None:
+            statement = statement.where(BreakRow.amount_at_risk_minor >= min_amount_minor)
+
+        total = len(self.session.scalars(statement).all())
+        paged_statement = statement.offset(offset).limit(limit)
+        rows = self.session.scalars(paged_statement).all()
+
+        return [r.to_domain() for r in rows], total
+
+    def count(self) -> int:
+        return self._count(BreakRow)
 
 
 class JournalRepository(_Repository):
-    """TODO(phase-4). Entries are immutable once posted; corrections reverse."""
+    """Entries are immutable once posted; corrections reverse."""
 
     def propose(self, entry: JournalEntry) -> None:
-        raise NotImplementedError
+        values = JournalEntryRow.values(entry)
+        row = JournalEntryRow(**values)
+        self.session.merge(row)
 
     def clearing_account_balance_minor(self) -> int:
-        """TODO: Gateway Clearing balance -- must equal captured-but-unsettled.
-
-        This is the self-proving control: a non-zero divergence *is* an
-        unreconciled break, detected by the ledger itself.
-        """
-        raise NotImplementedError
+        statement = select(JournalEntryRow)
+        rows = self.session.scalars(statement).all()
+        net_clearing = 0
+        for r in rows:
+            for line in r.lines:
+                if line.get("account_code") == "1100":
+                    net_clearing += (line.get("debit_minor", 0) - line.get("credit_minor", 0))
+        return net_clearing

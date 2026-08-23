@@ -23,6 +23,8 @@ FEATURE_WEIGHTS: dict[str, float] = {
     "counterparty": 0.10,
 }
 
+assert abs(sum(FEATURE_WEIGHTS.values()) - 1.0) < 1e-6, "FEATURE_WEIGHTS must sum to 1.0"
+
 
 @dataclass(slots=True)
 class ScoredCandidate:
@@ -35,23 +37,45 @@ class ScoredCandidate:
 
 
 def score_amount(a_minor: int, b_minor: int) -> float:
-    """TODO: 1.0 on exact, decaying with relative difference."""
-    raise NotImplementedError
+    """1.0 on exact match, decaying with relative difference."""
+    if a_minor == b_minor:
+        return 1.0
+    denom = max(abs(a_minor), abs(b_minor), 1)
+    diff = abs(a_minor - b_minor)
+    return max(0.0, 1.0 - (diff / denom))
 
 
 def score_date(delta_days: int, *, window_days: int) -> float:
-    """TODO: 1.0 same day, decaying to 0.0 at the window edge."""
-    raise NotImplementedError
+    """1.0 same day, decaying to 0.0 at window edge."""
+    abs_delta = abs(delta_days)
+    if abs_delta == 0:
+        return 1.0
+    if window_days <= 0 or abs_delta >= window_days:
+        return 0.0
+    return max(0.0, 1.0 - (abs_delta / window_days))
 
 
 def score_narration(normalized_narration: str, reference: str) -> float:
-    """TODO: RapidFuzz token-set ratio, normalised to 0..1."""
-    raise NotImplementedError
+    """Token-set ratio normalized to 0.0..1.0."""
+    if not normalized_narration or not reference:
+        return 0.0
+    norm_u = normalized_narration.upper().strip()
+    ref_u = reference.upper().strip()
+    if ref_u in norm_u or norm_u in ref_u:
+        return 1.0
+
+    tokens_norm = set(norm_u.split())
+    tokens_ref = set(ref_u.split())
+    if not tokens_norm or not tokens_ref:
+        return 0.0
+    intersection = tokens_norm.intersection(tokens_ref)
+    union = tokens_norm.union(tokens_ref)
+    return len(intersection) / len(union)
 
 
 def combined_score(features: dict[str, float]) -> float:
-    """TODO: weighted sum using FEATURE_WEIGHTS."""
-    raise NotImplementedError
+    """Weighted sum using FEATURE_WEIGHTS."""
+    return sum(features.get(name, 0.0) * weight for name, weight in FEATURE_WEIGHTS.items())
 
 
 def pick_best(
@@ -60,9 +84,19 @@ def pick_best(
     min_score: float,
     min_margin: float,
 ) -> ScoredCandidate | None:
-    """TODO: return the winner, or None when below threshold OR ambiguous.
+    """Return winner or None when below threshold OR ambiguous."""
+    if not candidates:
+        return None
 
-    Returning None on ambiguity is the point of this function -- that None is
-    what routes the case to the agent and then to a human.
-    """
-    raise NotImplementedError
+    sorted_candidates = sorted(candidates, key=lambda c: c.total, reverse=True)
+    best = sorted_candidates[0]
+
+    if best.total < min_score:
+        return None
+
+    if len(sorted_candidates) > 1:
+        runner_up = sorted_candidates[1]
+        if (best.total - runner_up.total) < min_margin:
+            return None
+
+    return best

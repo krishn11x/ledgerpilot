@@ -195,6 +195,52 @@ class BreakInjector:
         """
         raise NotImplementedError
 
+    def _inject_unsettled(self, ds: GeneratedDataset, rate: float) -> Labels:
+        """Leave a captured transaction outside settlement without breaking a batch.
+
+        The transaction remains captured, but is removed from its former payout
+        and that payout's corresponding bank credit.  This models a gateway
+        capture that has not settled yet while keeping the remaining batch
+        arithmetic valid.  Candidates always belong to a multi-transaction
+        payout, so no empty payout is created.
+        """
+        labels: Labels = []
+        for txn, payout, bank in self._select(self._settled_base_currency_candidates(ds), rate):
+            self._replace_gateway_txn(ds, txn.model_copy(update={"payout_id": None}))
+            self._replace_payout(
+                ds,
+                payout.model_copy(
+                    update={
+                        "expected_net_minor": payout.expected_net_minor - txn.net_minor,
+                        "txn_count": payout.txn_count - 1,
+                    }
+                ),
+            )
+            self._replace_bank(
+                ds,
+                bank.model_copy(update={"amount_minor": bank.amount_minor - txn.net_minor}),
+            )
+            labels.append(
+                GroundTruthLabel(
+                    label_id=f"GT-UNSETTLED-{txn.txn_id}",
+                    scenario="synthetic",
+                    seed=ds.seed,
+                    break_type=BreakType.UNSETTLED,
+                    expected_outcome=ExpectedOutcome.MATCHED_WITH_EXCEPTION,
+                    resolution_category=ResolutionCategory.INVESTIGATE,
+                    affected_ids=self._affected_ids(txn, payout, bank),
+                    amount_at_risk_minor=txn.net_minor,
+                    currency=txn.currency,
+                    injector="unsettled",
+                    detail={
+                        "unsettled_gateway_txn_id": txn.txn_id,
+                        "former_payout_id": payout.payout_id,
+                        "payout_resynchronised": "true",
+                    },
+                )
+            )
+        return labels
+
     def _inject_duplicate_payment(self, ds: GeneratedDataset, rate: float) -> Labels:
         """Add a second capture for an order and include it in settlement.
 
@@ -328,6 +374,15 @@ class BreakInjector:
         raise LookupError(f"payout not found: {replacement.payout_id}")
 
     @staticmethod
+    def _replace_gateway_txn(ds: GeneratedDataset, replacement: GatewayTxn) -> None:
+        """Replace one immutable gateway transaction by primary key."""
+        for index, txn in enumerate(ds.gateway_txns):
+            if txn.txn_id == replacement.txn_id:
+                ds.gateway_txns[index] = replacement
+                return
+        raise LookupError(f"gateway transaction not found: {replacement.txn_id}")
+
+    @staticmethod
     def _replace_bank(ds: GeneratedDataset, replacement: BankTxn) -> None:
         """Replace one immutable bank line by primary key."""
         for index, bank in enumerate(ds.bank_txns):
@@ -337,8 +392,37 @@ class BreakInjector:
         raise LookupError(f"bank transaction not found: {replacement.bank_txn_id}")
 
     def _inject_payout_mismatch(self, ds: GeneratedDataset, rate: float) -> Labels:
-        """TODO: perturb a bank credit so the batch no longer proves out."""
-        raise NotImplementedError
+        """Perturb a bank credit while leaving its payout calculation intact."""
+        labels: Labels = []
+        for txn, payout, bank in self._select(self._settled_base_currency_candidates(ds), rate):
+            magnitude = max(1, min(10_000, bank.amount_minor // 100))
+            delta = magnitude if self._rng.choice((True, False)) else -magnitude
+            if bank.amount_minor + delta <= 0:
+                delta = magnitude
+            self._replace_bank(
+                ds,
+                bank.model_copy(update={"amount_minor": bank.amount_minor + delta}),
+            )
+            labels.append(
+                GroundTruthLabel(
+                    label_id=f"GT-PAYOUT-MISMATCH-{bank.bank_txn_id}",
+                    scenario="synthetic",
+                    seed=ds.seed,
+                    break_type=BreakType.PAYOUT_MISMATCH,
+                    expected_outcome=ExpectedOutcome.MATCHED_WITH_EXCEPTION,
+                    resolution_category=ResolutionCategory.INVESTIGATE,
+                    affected_ids=self._affected_ids(txn, payout, bank),
+                    amount_at_risk_minor=abs(delta),
+                    currency=bank.currency,
+                    injector="payout_mismatch",
+                    detail={
+                        "bank_txn_id": bank.bank_txn_id,
+                        "expected_amount_minor": str(bank.amount_minor),
+                        "actual_amount_minor": str(bank.amount_minor + delta),
+                    },
+                )
+            )
+        return labels
 
     def _inject_narration_noise(self, ds: GeneratedDataset, rate: float) -> Labels:
         """TODO: strip or corrupt the UTR in narration.

@@ -20,6 +20,7 @@ from ledgerpilot.evaluation.metrics import (
     false_positive_match_rate,
 )
 from ledgerpilot.synth.breaks import BreakMix, GroundTruthLabel, write_ground_truth
+from ledgerpilot.synth.generator import SyntheticGenerator
 
 
 def test_compute_confusion_matrix() -> None:
@@ -168,3 +169,20 @@ def test_write_ground_truth_round_trips(tmp_path: Path) -> None:
     path = tmp_path / "ground_truth.json"
     write_ground_truth([label], str(path))
     assert GroundTruthLabel.from_dict(json.loads(path.read_text())[0]) == label
+
+
+def test_missing_injectors_emit_deterministic_labels() -> None:
+    dataset = SyntheticGenerator(seed=11, period_days=7).generate(order_count=100)
+    mix = BreakMix(
+        missing_in_gateway=0.0,
+        unsettled=0.0,
+        duplicate_payment=0.0,
+        payout_mismatch=0.0,
+        fee_variance=1.0,
+        narration_noise=1.0,
+    )
+    from ledgerpilot.synth.breaks import BreakInjector
+
+    _, labels = BreakInjector(seed=11).inject(dataset, mix)
+    assert any(label.break_type is BreakType.FEE_VARIANCE for label in labels)
+    assert any(label.break_type is None for label in labels)

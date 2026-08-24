@@ -184,21 +184,18 @@ class BreakInjector:
 
     def inject(self, dataset: GeneratedDataset, mix: BreakMix) -> tuple[GeneratedDataset, Labels]:
         """Apply declared mutations and return ground truth labels."""
-        from contextlib import suppress
-
         self._rng = random.Random(self.seed)
         labels: Labels = []
         for injector, rate in (
+            (self._inject_fee_variance, mix.fee_variance),
             (self._inject_missing_in_gateway, mix.missing_in_gateway),
             (self._inject_unsettled, mix.unsettled),
             (self._inject_duplicate_payment, mix.duplicate_payment),
             (self._inject_payout_mismatch, mix.payout_mismatch),
-            (self._inject_fee_variance, mix.fee_variance),
             (self._inject_narration_noise, mix.narration_noise),
         ):
             if rate > 0.0:
-                with suppress(NotImplementedError):
-                    labels.extend(injector(dataset, rate))
+                labels.extend(injector(dataset, rate))
         return dataset, labels
 
     # -- Individual injectors ------------------------------------------------
@@ -253,12 +250,31 @@ class BreakInjector:
         return labels
 
     def _inject_fee_variance(self, ds: GeneratedDataset, rate: float) -> Labels:
-        """TODO: perturb fee_minor so net no longer matches the schedule.
-
-        Include some one-paise rounding-direction errors -- the realistic and
-        genuinely hard case, easy to dismiss as noise and expensive in aggregate.
-        """
-        raise NotImplementedError
+        """Perturb a fee by one minor unit while leaving the captured net fixed."""
+        labels: Labels = []
+        for txn, payout, bank in self._select(self._settled_base_currency_candidates(ds), rate):
+            replacement = txn.model_copy(update={"fee_minor": txn.fee_minor + 1})
+            self._replace_gateway_txn(ds, replacement)
+            labels.append(
+                GroundTruthLabel(
+                    label_id=f"GT-FEE-VARIANCE-{txn.txn_id}",
+                    scenario=ds.scenario,
+                    seed=ds.seed,
+                    break_type=BreakType.FEE_VARIANCE,
+                    expected_outcome=ExpectedOutcome.MATCHED_WITH_EXCEPTION,
+                    resolution_category=ResolutionCategory.INVESTIGATE,
+                    affected_ids=self._affected_ids(txn, payout, bank),
+                    amount_at_risk_minor=1,
+                    currency=txn.currency,
+                    injector="fee_variance",
+                    detail={
+                        "gateway_txn_id": txn.txn_id,
+                        "expected_fee_minor": str(txn.fee_minor),
+                        "actual_fee_minor": str(txn.fee_minor + 1),
+                    },
+                )
+            )
+        return labels
 
     def _inject_unsettled(self, ds: GeneratedDataset, rate: float) -> Labels:
         """Leave a captured transaction outside settlement without breaking a batch.
@@ -490,12 +506,41 @@ class BreakInjector:
         return labels
 
     def _inject_narration_noise(self, ds: GeneratedDataset, rate: float) -> Labels:
-        """TODO: strip or corrupt the UTR in narration.
+        """Strip settlement references without changing the underlying credit."""
+        if not 0.0 <= rate <= 1.0:
+            raise ValueError(f"break rate must be between 0 and 1, got {rate}")
+        if rate == 0.0 or not ds.bank_txns:
+            return []
 
-        Not a break in itself -- it forces the fallback path and the agent's
-        narration parser, so it is labelled separately from real breaks.
-        """
-        raise NotImplementedError
+        target = max(1, round(len(ds.bank_txns) * rate))
+        selected = self._rng.sample(ds.bank_txns, k=min(target, len(ds.bank_txns)))
+        labels: Labels = []
+        for bank in selected:
+            noisy = bank.model_copy(
+                update={
+                    "narration": (
+                        f"{bank.currency} MERCHANT CREDIT "
+                        f"{bank.value_date.isoformat()}"
+                    )
+                }
+            )
+            self._replace_bank(ds, noisy)
+            labels.append(
+                GroundTruthLabel(
+                    label_id=f"GT-NARRATION-NOISE-{bank.bank_txn_id}",
+                    scenario=ds.scenario,
+                    seed=ds.seed,
+                    break_type=None,
+                    expected_outcome=ExpectedOutcome.MATCHED,
+                    resolution_category=ResolutionCategory.NONE,
+                    affected_ids=[bank.bank_txn_id],
+                    amount_at_risk_minor=0,
+                    currency=bank.currency,
+                    injector="narration_noise",
+                    detail={"bank_txn_id": bank.bank_txn_id},
+                )
+            )
+        return labels
 
 
 def write_ground_truth(labels: Labels, path: str) -> None:

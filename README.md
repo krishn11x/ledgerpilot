@@ -6,8 +6,9 @@ LedgerPilot reconciles the full payment chain — commerce orders, payment gatew
 transactions, gateway settlement batches, and bank statement lines — then
 explains, classifies and resolves whatever doesn't tie out.
 
-> **Status: scaffold.** Structure, contracts and the runnable API skeleton are in
-> place. Business logic is not implemented yet. See [Build phases](#build-phases).
+> **Status: local demo.** The deterministic reconciliation engine, evaluation
+> harness, API, and API-backed frontend views are runnable locally. The optional
+> LLM agent path and several synthetic break injectors remain under development.
 
 ---
 
@@ -403,6 +404,20 @@ runtime.
 ```bash
 uv run pytest
 ```
+
+### 6. Run the deterministic demo
+
+From the repository root:
+
+```bash
+uv run ledgerpilot db init
+uv run ledgerpilot generate --scenario smoke
+uv run ledgerpilot ingest --scenario smoke
+uv run ledgerpilot evaluate --scenario clean
+```
+
+The dashboard, exception queue, break detail, journal, and audit views read
+from the FastAPI endpoints at <http://localhost:5173>.
 
 ---
 

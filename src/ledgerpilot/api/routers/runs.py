@@ -1,4 +1,4 @@
-"""Reconciliation runs. SKELETON -- endpoints return 501."""
+﻿"""Reconciliation runs."""
 
 from __future__ import annotations
 
@@ -8,21 +8,24 @@ from typing import Any
 from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
 
+from ledgerpilot.api.errors import NotFoundError
 from ledgerpilot.api.schemas import StartRunRequest
 from ledgerpilot.api.sse import run_progress_stream
 from ledgerpilot.ingest.loaders import load_bank_txns, load_gateway_txns, load_orders, load_payouts
 from ledgerpilot.recon.engine import ReconContext, ReconEngine
 from ledgerpilot.store.db import session_scope
 from ledgerpilot.store.repositories import BreakRepository, MatchRepository, ReconRunRepository
-from ledgerpilot.synth.scenarios import get_scenario, materialize
+from ledgerpilot.synth.scenarios import SCENARIOS, get_scenario, materialize
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
 
 @router.post("", status_code=202, summary="Start a reconciliation run")
 def start_run(body: StartRunRequest) -> dict[str, Any]:
-    """TODO(phase-6): create a run and execute the cascade in the background."""
+    """Create a run and execute the cascade."""
     scenario_name = body.scenario or "baseline"
+    if scenario_name not in SCENARIOS:
+        raise NotFoundError(f"unknown scenario {scenario_name!r}")
     scenario = get_scenario(scenario_name)
     paths = materialize(scenario_name, seed=scenario.seed)
     ctx = ReconContext(
@@ -46,15 +49,15 @@ def start_run(body: StartRunRequest) -> dict[str, Any]:
 
 @router.get("/{run_id}", summary="Run status and counts")
 def get_run(run_id: str) -> dict[str, Any]:
-    """TODO(phase-6): status, per-pass counts, timings, match rate."""
+    """Status, per-pass counts, timings, match rate."""
     with session_scope() as session:
         run = ReconRunRepository(session).get(run_id)
     if run is None:
-        return {"run_id": run_id, "status": "not_found"}
+        raise NotFoundError(f"run {run_id!r} not found")
     return run.model_dump()
 
 
 @router.get("/{run_id}/events", summary="Live progress (SSE)")
 async def stream_run_events(run_id: str) -> Any:
-    """TODO(phase-6): EventSourceResponse over ``api.sse.run_progress_stream``."""
+    """EventSourceResponse over ``api.sse.run_progress_stream``."""
     return EventSourceResponse(run_progress_stream(run_id))

@@ -1,25 +1,38 @@
-"""Matches. SKELETON -- endpoints return 501."""
+﻿"""Matches."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
+from sqlalchemy import select
 
 from ledgerpilot.api.errors import NotFoundError
 from ledgerpilot.store.db import session_scope
 from ledgerpilot.store.repositories import MatchRepository
+from ledgerpilot.store.tables import MatchRow
 
 router = APIRouter(prefix="/matches", tags=["matches"])
 
 
+@router.get("", summary="Query matches")
+def list_matches(
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict[str, Any]:
+    """Paged list of reconciliation matches."""
+    with session_scope() as session:
+        rows = session.scalars(
+            select(MatchRow).order_by(MatchRow.match_id).offset(offset).limit(limit)
+        ).all()
+        total = MatchRepository(session).count()
+    items = [row.to_domain().model_dump() for row in rows]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
 @router.get("/{match_id}", summary="Match detail and score breakdown")
 def get_match(match_id: str) -> dict[str, Any]:
-    """TODO(phase-7): legs, method, per-feature score, why it matched.
-
-    The per-feature breakdown is the point: "confidence 0.87" alone is not
-    reviewable, "amount exact, date 1 day off, narration 0.79" is.
-    """
+    """Legs, method, per-feature score, why it matched."""
     with session_scope() as session:
         match = MatchRepository(session).get(match_id)
     if match is None:

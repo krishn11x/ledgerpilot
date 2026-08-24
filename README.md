@@ -11,7 +11,7 @@ need human review or a LangGraph-assisted decision path.
 >
 > LedgerPilot is a feature-complete, reproducible local demo of an AI-assisted
 > payment reconciliation platform. The verified demo includes deterministic
-> reconciliation, LangGraph orchestration, human-in-the-loop decisions,
+> reconciliation, real LangGraph orchestration, human-in-the-loop decisions,
 > double-entry safeguards, audit trails, evaluation, authentication, and a
 > React dashboard.
 >
@@ -116,42 +116,44 @@ work to an LLM. LedgerPilot does neither. The design is deliberate:
 - the AI layer is reserved for ambiguous residuals and explanation
 - every decision is grounded in arithmetic and event history
 - policy gates prevent silent mis-matches from reaching the ledger
-- models used by the optional LLM integration are configurable; the core
-  reconciliation and evaluation paths do not require an external LLM service
+- Models used by the optional LLM integration are configurable. The core
+  reconciliation and evaluation paths do not require an external LLM service.
 
 This creates a practical finance workflow: fast automation for the routine,
 human oversight for the edge cases, and evidence for every decision.
 
 ## Build phases and current status
 
-The original phase model remains useful as a historical development arc, but the
-current implementation has moved well past the early skeleton milestones.
+The project’s original phase plan is now a record of completed implementation
+milestones rather than a backlog of pending work.
 
 ### Completed implementation
 
-- deterministic reconciliation engine and break taxonomy
-- synthetic data generators and fee-variance / narration-noise injectors
-- same-seed reproducible generation and evaluation harness
-- LangGraph decision graph with checkpointed interrupts and resume flow
+- Phase 0–8: scaffold, deterministic engine, break taxonomy, synthetic data,
+  evaluation harness, ledger invariants, agent graph, API, and frontend views
+- deterministic reconciliation engine and break classification
+- fee-variance and narration-noise synthetic injectors
+- same-seed reproducible generation and deterministic evaluation
+- LangGraph orchestration with checkpointed interrupts and resume flow
+- human-in-the-loop decision API, exception queue, and break detail views
 - audit trail and hash-chain verification
-- API + React frontend for dashboard, exception queue, and break detail
 - authentication, run isolation, and end-to-end regression coverage
 
 ### Current verified capabilities
 
-- local demo runs end-to-end with deterministic matching and human review
+- end-to-end local demo runs with deterministic matching and human review
 - backend tests pass
 - frontend build and lint pass
-- evaluation reports are generated from real scenarios
+- evaluation scoring runs against real scenarios
 - the AI graph executes in validated local-agent evaluation paths
 
-### Future work / remaining improvements
+### Future work / production hardening
 
 - durable production checkpoint storage
 - enterprise identity and RBAC
-- rate limiting and operational hardening
-- managed hosting / deployment infrastructure
-- broader production monitoring and alerting
+- rate limiting and standard production security controls
+- managed hosting and deployment infrastructure
+- broader operational telemetry and alerting
 
 ---
 

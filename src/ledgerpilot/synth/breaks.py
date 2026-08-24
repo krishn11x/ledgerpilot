@@ -253,8 +253,21 @@ class BreakInjector:
         """Perturb a fee by one minor unit while leaving the captured net fixed."""
         labels: Labels = []
         for txn, payout, bank in self._select(self._settled_base_currency_candidates(ds), rate):
-            replacement = txn.model_copy(update={"fee_minor": txn.fee_minor + 1})
+            replacement = txn.model_copy(
+                update={
+                    "fee_minor": txn.fee_minor + 1,
+                    "net_minor": txn.net_minor - 1,
+                }
+            )
             self._replace_gateway_txn(ds, replacement)
+            self._replace_payout(
+                ds,
+                payout.model_copy(update={"expected_net_minor": payout.expected_net_minor - 1}),
+            )
+            self._replace_bank(
+                ds,
+                bank.model_copy(update={"amount_minor": bank.amount_minor - 1}),
+            )
             labels.append(
                 GroundTruthLabel(
                     label_id=f"GT-FEE-VARIANCE-{txn.txn_id}",

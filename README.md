@@ -64,6 +64,47 @@ uv run ledgerpilot evaluate --scenario clean
 This intentionally exercises the deterministic pipeline, the API layer, and the
 frontend views in a controlled local environment.
 
+## Current Verification Status
+
+The current repository supports the following verified local-demo claims:
+
+- Backend tests: ✅
+- Frontend build: ✅
+- Frontend lint: ✅
+- Deterministic evaluation: ✅
+- LangGraph / AI evaluation: ✅
+- End-to-end regression: ✅
+- Browser/UI smoke verification: ✅
+
+These checks are validated by the repository’s test suite, evaluation CLI, and the
+frontend build/lint pipeline.
+
+## How the Demo Works
+
+```text
+Synthetic payment data
+        ↓
+Ingestion + validation
+        ↓
+Deterministic reconciliation
+        ↓
+Residual breaks
+        ↓
+LangGraph AI Controller
+        ↓
+VERIFY
+        ↓
+DECIDE
+     ↙      ↘
+   ACT    ESCALATE
+    ↓        ↓
+Exception Queue → Break Detail / Audit
+```
+
+Each stage is implemented in the current codebase: synthetic data generation,
+validation and quarantine, deterministic matching passes, residual investigation,
+verification of arithmetic, and human-in-the-loop approval or escalation.
+
 ---
 
 ## Why this is interesting
@@ -80,6 +121,37 @@ work to an LLM. LedgerPilot does neither. The design is deliberate:
 
 This creates a practical finance workflow: fast automation for the routine,
 human oversight for the edge cases, and evidence for every decision.
+
+## Build phases and current status
+
+The original phase model remains useful as a historical development arc, but the
+current implementation has moved well past the early skeleton milestones.
+
+### Completed implementation
+
+- deterministic reconciliation engine and break taxonomy
+- synthetic data generators and fee-variance / narration-noise injectors
+- same-seed reproducible generation and evaluation harness
+- LangGraph decision graph with checkpointed interrupts and resume flow
+- audit trail and hash-chain verification
+- API + React frontend for dashboard, exception queue, and break detail
+- authentication, run isolation, and end-to-end regression coverage
+
+### Current verified capabilities
+
+- local demo runs end-to-end with deterministic matching and human review
+- backend tests pass
+- frontend build and lint pass
+- evaluation reports are generated from real scenarios
+- the AI graph executes in validated local-agent evaluation paths
+
+### Future work / remaining improvements
+
+- durable production checkpoint storage
+- enterprise identity and RBAC
+- rate limiting and operational hardening
+- managed hosting / deployment infrastructure
+- broader production monitoring and alerting
 
 ---
 
@@ -149,6 +221,21 @@ LedgerPilot is currently designed for a controlled local demo and evaluation set
 - Production work still needed includes infrastructure, monitoring, environment hardening, and deployment automation
 
 This is a credible working prototype and demo platform, but it is not presented as a fully hosted production deployment.
+
+## Future Work
+
+LedgerPilot’s current local demo is strong and reproducible, but the project still
+has a clear path to production hardening.
+
+- durable checkpoint persistence beyond the process-scoped local demo setup
+- stronger identity, authorization, and audit access control
+- rate limiting and API protection for multi-user deployment
+- containerized or managed deployment infrastructure
+- deeper operational telemetry and alerting
+
+The core reconciliation and agent workflows are already functional and verified in
+this repository; the remaining work is primarily deployment and production
+readiness rather than core product functionality.
 
 ---
 

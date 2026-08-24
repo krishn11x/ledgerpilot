@@ -7,6 +7,7 @@ must not regress below recorded thresholds.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import time
@@ -14,6 +15,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from ledgerpilot.agent.graph import build_graph
+from ledgerpilot.agent.state import AgentState
 from ledgerpilot.domain.enums import BreakType
 from ledgerpilot.domain.models import PayoutBatch
 from ledgerpilot.domain.money import FxRate, Money
@@ -64,6 +67,38 @@ def ordered_pair(first: str, second: str) -> tuple[str, str]:
     return (first, second) if first <= second else (second, first)
 
 
+async def _evaluate_agent(breaks: list[Any]) -> tuple[int, int, float]:
+    """Run the compiled local graph over detected breaks and collect costs."""
+    graph = build_graph()
+    processed = 0
+    tokens = 0
+    escalated = 0
+    for brk in breaks:
+        state: AgentState = {
+            "break_id": brk.break_id,
+            "run_id": "EVAL-AGENT",
+            "break_context": {
+                "break_id": brk.break_id,
+                "break_type": brk.break_type,
+                "amount_at_risk_minor": brk.amount_at_risk_minor,
+                "currency": brk.currency,
+                "narration": brk.summary,
+                "subject_ids": [leg.record_id for leg in brk.legs],
+                "break_obj": brk,
+            },
+            "steps": [],
+            "tokens_used": 0,
+            "steps_used": 0,
+            "retry_count": 0,
+        }
+        result = await graph.ainvoke(state)
+        processed += 1
+        tokens += int(result.get("tokens_used", 0))
+        escalated += int(result.get("decision") == "escalate")
+    rate = escalated / processed if processed else 0.0
+    return processed, tokens, rate
+
+
 def report_to_dict(report: EvalReport) -> dict[str, Any]:
     """Convert an EvalReport to a JSON-serializable dictionary."""
     d = dict(report.__dict__)
@@ -107,6 +142,14 @@ def run_evaluation(scenario: str, *, with_agent: bool = False) -> EvalReport:
             bank_txns=bank_txns,
         )
         result = ReconEngine().run_context(ctx)
+
+        agent_breaks = 0
+        agent_tokens = 0
+        escalation_rate = 0.0
+        if with_agent:
+            agent_breaks, agent_tokens, escalation_rate = asyncio.run(
+                _evaluate_agent(result.breaks)
+            )
 
         predicted_breaks: list[tuple[str, BreakType]] = []
         for brk in result.breaks:
@@ -161,7 +204,7 @@ def run_evaluation(scenario: str, *, with_agent: bool = False) -> EvalReport:
             seed=scen.seed,
             total_records=total_records,
             auto_match_rate=result.auto_match_rate,
-            escalation_rate=0.0,
+            escalation_rate=escalation_rate,
             unmatched_rate=len(result.residual_ids) / max(total_records, 1),
             per_type=confusion,
             false_positive_match_rate=false_positive_match_rate(committed_matches, true_pairings),
@@ -169,9 +212,9 @@ def run_evaluation(scenario: str, *, with_agent: bool = False) -> EvalReport:
             value_unreconciled_minor=sum(brk.amount_at_risk_minor for brk in result.breaks),
             value_at_risk_minor=sum(brk.amount_at_risk_minor for brk in result.breaks),
             currency=ctx.orders[0].currency if ctx.orders else "INR",
-            agent_breaks_processed=0,
-            agent_tokens_total=0,
-            mean_tokens_per_break=0.0,
+            agent_breaks_processed=agent_breaks,
+            agent_tokens_total=agent_tokens,
+            mean_tokens_per_break=agent_tokens / agent_breaks if agent_breaks else 0.0,
             wall_clock_seconds=round(elapsed, 4),
         )
         return report

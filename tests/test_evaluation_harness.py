@@ -54,6 +54,14 @@ def test_run_evaluation_baseline() -> None:
     assert report.wall_clock_seconds >= 0.0
 
 
+def test_run_evaluation_runs_real_local_agent_graph() -> None:
+    report = run_evaluation("smoke", with_agent=True)
+    assert report.agent_breaks_processed > 0
+    assert report.agent_tokens_total > 0
+    assert report.mean_tokens_per_break > 0.0
+    assert 0.0 <= report.escalation_rate <= 1.0
+
+
 def test_check_thresholds_passing() -> None:
     report = EvalReport(
         scenario="test",

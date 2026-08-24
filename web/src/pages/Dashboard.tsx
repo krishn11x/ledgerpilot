@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { api } from "../lib/api";
-import { useClearingProof, useMetrics } from "../hooks";
+import { useClearingProof } from "../hooks";
 
 export default function Dashboard() {
   const [latestRunId, setLatestRunId] = useState<string | null>(null);
@@ -12,24 +11,19 @@ export default function Dashboard() {
     setLatestRunId(value);
   }, []);
 
-  const metrics = useMetrics("baseline");
   const proof = useClearingProof();
-  const report = metrics.data;
-
-  if (metrics.isLoading) return <p className="text-sm text-ink-muted">Loading evaluation...</p>;
-  if (metrics.isError || !report) return <p className="text-sm text-sev-high">Metrics unavailable. Start the API and retry.</p>;
 
   if (!latestRunId) {
     return (
       <div className="mx-auto max-w-4xl space-y-6">
         <header>
-          <p className="text-xs uppercase tracking-[0.2em] text-accent">Control room</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight">No reconciliation run yet.</h1>
+          <p className="text-xs uppercase tracking-[0.2em] text-accent">Current reconciliation</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight">No reconciliation yet.</h1>
         </header>
 
         <div className="border border-border-subtle bg-surface p-6">
           <p className="text-sm text-ink-muted">
-            Start a reconciliation to see the latest records, exceptions, and value at risk for your uploaded data.
+            Upload a dataset and run reconciliation to see the real result set for this session.
           </p>
           <Link
             to="/workflow"
@@ -38,26 +32,9 @@ export default function Dashboard() {
             Start Reconciliation
           </Link>
         </div>
-
-        <section className="border border-border-subtle bg-surface p-5">
-          <h2 className="text-sm font-medium">System evaluation</h2>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard label="Auto-match rate" value={`${(report.auto_match_rate * 100).toFixed(1)}%`} />
-            <MetricCard label="False-positive rate" value={`${(report.false_positive_match_rate * 100).toFixed(2)}%`} />
-            <MetricCard label="Unreconciled value" value={formatMinor(report.value_unreconciled_minor, "INR")} />
-            <MetricCard label="Records evaluated" value={report.total_records.toLocaleString()} />
-          </div>
-        </section>
       </div>
     );
   }
-
-  const cards = [
-    ["Auto-match rate", `${(report.auto_match_rate * 100).toFixed(1)}%`],
-    ["False-positive rate", `${(report.false_positive_match_rate * 100).toFixed(2)}%`],
-    ["Unreconciled value", formatMinor(report.value_unreconciled_minor, "INR")],
-    ["Records evaluated", report.total_records.toLocaleString()],
-  ];
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
@@ -67,20 +44,22 @@ export default function Dashboard() {
         <p className="mt-2 text-sm text-ink-muted">Latest run: {latestRunId}</p>
       </header>
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {cards.map(([label, value]) => (
-          <MetricCard key={label} label={label} value={value} />
-        ))}
+        <MetricCard label="Records checked" value="—" />
+        <MetricCard label="Matched" value="—" />
+        <MetricCard label="Issues found" value="—" />
+        <MetricCard label="Money needing attention" value="—" />
       </section>
       <section className="grid gap-4 md:grid-cols-2">
         <div className="border border-border-subtle bg-surface p-5">
           <h2 className="text-sm font-medium">System evaluation</h2>
           <div className="mt-5 space-y-4 text-sm">
-            <MetricRow label="Macro precision" value={report.macro_precision} />
-            <MetricRow label="Macro recall" value={report.macro_recall} />
+            <MetricRow label="Accuracy" value="—" />
+            <MetricRow label="Coverage" value="—" />
+            <MetricRow label="False-positive rate" value="—" />
           </div>
         </div>
         <div className="border border-border-subtle bg-surface p-5">
-          <h2 className="text-sm font-medium">Gateway Clearing proof</h2>
+          <h2 className="text-sm font-medium">Settlement check</h2>
           <p className={`mt-5 text-2xl ${proof.data?.proves_out ? "text-sev-low" : "text-sev-high"}`}>
             {proof.isLoading ? "Checking..." : proof.data?.proves_out ? "In balance" : "Variance detected"}
           </p>
@@ -100,8 +79,8 @@ function MetricCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MetricRow({ label, value }: { label: string; value: number }) {
-  return <div className="flex justify-between border-b border-border-subtle pb-3"><span className="text-ink-muted">{label}</span><span className="money">{(value * 100).toFixed(1)}%</span></div>;
+function MetricRow({ label, value }: { label: string; value: string }) {
+  return <div className="flex justify-between border-b border-border-subtle pb-3"><span className="text-ink-muted">{label}</span><span className="money">{value}</span></div>;
 }
 
 function formatMinor(value: number, currency: string) {

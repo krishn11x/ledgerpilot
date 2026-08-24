@@ -43,11 +43,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   headers.set("Authorization", `Bearer ${AUTH_TOKEN}`);
 
-  const res = await fetch(`${PREFIX}${path}`, {
-    ...init,
-    headers,
-    body: isFormData ? init?.body : init?.body !== undefined ? JSON.stringify(init.body) : undefined,
-  });
+  const fetchInit: RequestInit = { ...init };
+  if (isFormData) {
+    fetchInit.body = init?.body as BodyInit;
+  } else if (init?.body !== undefined) {
+    fetchInit.body = JSON.stringify(init.body);
+  } else {
+    delete fetchInit.body;
+  }
+
+  fetchInit.headers = headers;
+
+  const res = await fetch(`${PREFIX}${path}`, fetchInit);
 
   if (!res.ok) {
     let code = "http_error";

@@ -7,11 +7,12 @@ import { NavLink } from "react-router-dom";
  * the exception queue is the daily job, the dashboard is a weekly glance.
  */
 const NAV = [
-  { to: "/workflow", label: "Workflow", hint: "Get started and run a reconciliation" },
-  { to: "/exceptions", label: "Exceptions", hint: "Breaks needing a decision" },
-  { to: "/dashboard", label: "Dashboard", hint: "Match rate and value at risk" },
-  { to: "/ledger", label: "Journal", hint: "Proposed and posted entries" },
-  { to: "/audit", label: "Audit log", hint: "Hash-chained event history" },
+  { to: "/", label: "Home", hint: "Landing page for the reconciliation workspace" },
+  { to: "/workflow", label: "New reconciliation", hint: "Upload files and run a reconciliation" },
+  { to: "/exceptions", label: "Issues", hint: "Open issues needing a decision" },
+  { to: "/dashboard", label: "Reports", hint: "Current run and system evaluation" },
+  { to: "/ledger", label: "Accounting", hint: "Journal entries and accounting actions" },
+  { to: "/audit", label: "Audit", hint: "Decision history and evidence trail" },
 ];
 
 export default function Sidebar() {

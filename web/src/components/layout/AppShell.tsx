@@ -48,7 +48,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-border-subtle px-6">
           <div className="flex items-baseline gap-3">
-            <span className="text-sm font-medium tracking-tight">LedgerPilot</span>
+            <Link to="/" className="text-sm font-medium tracking-tight text-ink hover:text-accent">
+              LedgerPilot
+            </Link>
             <span className="text-xs text-ink-faint">AI Finance Controller</span>
           </div>
 
@@ -57,7 +59,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               to="/workflow"
               className="rounded-full bg-accent px-3 py-1.5 font-medium text-canvas"
             >
-              Get Started
+              New reconciliation
             </Link>
             <Pill
               label="Auto-resolution enabled"

@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from ledgerpilot.config import Settings, get_settings
@@ -28,14 +29,27 @@ def app_settings() -> Settings:
     return get_settings()
 
 
-def current_actor() -> str:
-    """TODO(phase-6): resolve the acting user for the audit log.
+bearer = HTTPBearer(auto_error=False)
 
-    Hardcoded for the hackathon. Every approval must be attributable, so this
-    returns a real identity rather than None even in the stub -- an audit event
-    with an anonymous actor is not an audit event.
-    """
-    return "demo@ledgerpilot.local"
+
+def require_auth(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+) -> str:
+    """Validate the configured demo bearer token and return its actor id."""
+    from ledgerpilot.config import settings
+
+    if credentials is None or credentials.credentials != settings.api_auth_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return settings.api_actor
+
+
+def current_actor(actor: str = Depends(require_auth)) -> str:
+    """Return the trusted actor established by authentication middleware."""
+    return actor
 
 
 SessionDep = Depends(db_session)

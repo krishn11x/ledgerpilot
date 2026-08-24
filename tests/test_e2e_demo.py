@@ -21,7 +21,7 @@ def test_smoke_demo_reaches_decision_audit_and_evaluation(client: Any) -> None:
 
     investigation = client.post(f"/breaks/{break_id}/investigate")
     assert investigation.status_code == 202
-    assert investigation.json()["decision"] in {"auto_resolve", "escalate"}
+    assert "__interrupt__" in investigation.json()
 
     decision = client.post(
         f"/breaks/{break_id}/decision",

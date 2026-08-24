@@ -14,7 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -97,6 +97,8 @@ class Settings(BaseSettings):
     # -- API server ---------------------------------------------------------
     api_host: str = "127.0.0.1"
     api_port: int = 8000
+    api_auth_token: str = "local-demo-token"
+    api_actor: str = "demo@ledgerpilot.local"
     cors_origins: list[str] = Field(default=["http://localhost:5173", "http://127.0.0.1:5173"])
 
     @field_validator("cors_origins", mode="before")
@@ -115,6 +117,22 @@ class Settings(BaseSettings):
     def agent_available(self) -> bool:
         """True only when the agent is switched on *and* a key is present."""
         return self.agent_enabled and bool(self.anthropic_api_key)
+
+    @property
+    def is_local_demo_token(self) -> bool:
+        """Whether the configured token is the development-only default."""
+        return self.api_auth_token == "local-demo-token"
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> Settings:
+        """Reject development credentials when production mode is selected."""
+        if self.env == "production" and (
+            not self.api_auth_token or self.is_local_demo_token
+        ):
+            raise ValueError("LP_API_AUTH_TOKEN must be set in production")
+        if "*" in self.cors_origins:
+            raise ValueError("LP_CORS_ORIGINS must list explicit origins")
+        return self
 
 
 @lru_cache(maxsize=1)

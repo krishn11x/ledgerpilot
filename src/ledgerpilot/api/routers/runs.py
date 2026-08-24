@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
@@ -29,7 +30,7 @@ def start_run(body: StartRunRequest) -> dict[str, Any]:
     scenario = get_scenario(scenario_name)
     paths = materialize(scenario_name, seed=scenario.seed)
     ctx = ReconContext(
-        run_id=f"RUN-{scenario_name}",
+        run_id=f"RUN-{scenario_name}-{uuid4().hex[:12]}",
         orders=load_orders(Path(paths["orders"])),
         gateway_txns=load_gateway_txns(Path(paths["gateway_txns"])),
         payouts=load_payouts(Path(paths["payouts"])),
@@ -44,7 +45,12 @@ def start_run(body: StartRunRequest) -> dict[str, Any]:
             match_repo.upsert(match)
         for brk in result.breaks:
             break_repo.upsert(brk)
-    return {"run_id": result.run.run_id, "counts": result.run.counts, "status": result.run.status}
+    return {
+        "run_id": result.run.run_id,
+        "scenario": scenario_name,
+        "counts": result.run.counts,
+        "status": result.run.status,
+    }
 
 
 @router.get("/{run_id}", summary="Run status and counts")

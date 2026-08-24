@@ -11,6 +11,7 @@ import pytest
 os.environ.setdefault("LP_DATABASE_URL", "sqlite+pysqlite:///:memory:")
 os.environ.setdefault("LP_AGENT_ENABLED", "false")
 os.environ.setdefault("LP_LOG_LEVEL", "WARNING")
+os.environ.setdefault("LP_API_AUTH_TOKEN", "test-token")
 
 
 @pytest.fixture(scope="session")
@@ -20,5 +21,5 @@ def client() -> Iterator[object]:
 
     from ledgerpilot.api.main import create_app
 
-    with TestClient(create_app()) as c:
+    with TestClient(create_app(), headers={"Authorization": "Bearer test-token"}) as c:
         yield c

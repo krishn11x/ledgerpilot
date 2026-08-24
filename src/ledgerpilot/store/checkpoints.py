@@ -17,15 +17,31 @@ agent's evidence chain survives the wait and stays attached to the decision.
 
 from __future__ import annotations
 
+from contextlib import ExitStack
+from functools import lru_cache
 from typing import Any
 
 from ledgerpilot.config import settings
 
+_resources = ExitStack()
 
+
+@lru_cache(maxsize=1)
 def get_checkpointer() -> Any:
-    """TODO(phase-5): return a LangGraph checkpointer for the configured DB.
+    """Return a process-scoped local checkpointer for demo execution.
 
-    Must select PostgresSaver when ``settings.is_postgres`` and SqliteSaver
-    otherwise, and must run its own ``setup()`` migration on first use.
+    PostgreSQL checkpoint support is supplied by the optional production
+    deployment and is intentionally not forced on local SQLite development.
     """
-    return {"dialect": "postgres" if settings.is_postgres else "sqlite"}
+    if settings.is_postgres:
+        from langgraph.checkpoint.postgres import PostgresSaver
+
+        checkpointer = _resources.enter_context(
+            PostgresSaver.from_conn_string(settings.database_url)
+        )
+        checkpointer.setup()
+        return checkpointer
+
+    from langgraph.checkpoint.memory import MemorySaver
+
+    return MemorySaver()

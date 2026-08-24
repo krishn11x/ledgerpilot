@@ -12,10 +12,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ledgerpilot import __version__
+from ledgerpilot.api.deps import require_auth
 from ledgerpilot.api.errors import register_exception_handlers
 from ledgerpilot.api.routers import audit, breaks, health, ledger, matches, metrics, runs, scenarios
 from ledgerpilot.config import settings
@@ -79,13 +80,13 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
 
     # Feature routers -- skeletons, 501 until implemented
-    app.include_router(runs.router)
-    app.include_router(breaks.router)
-    app.include_router(matches.router)
-    app.include_router(ledger.router)
-    app.include_router(audit.router)
-    app.include_router(metrics.router)
-    app.include_router(scenarios.router)
+    app.include_router(runs.router, dependencies=[Depends(require_auth)])
+    app.include_router(breaks.router, dependencies=[Depends(require_auth)])
+    app.include_router(matches.router, dependencies=[Depends(require_auth)])
+    app.include_router(ledger.router, dependencies=[Depends(require_auth)])
+    app.include_router(audit.router, dependencies=[Depends(require_auth)])
+    app.include_router(metrics.router, dependencies=[Depends(require_auth)])
+    app.include_router(scenarios.router, dependencies=[Depends(require_auth)])
 
     @app.get("/", tags=["meta"], summary="Service banner")
     def root() -> dict[str, Any]:

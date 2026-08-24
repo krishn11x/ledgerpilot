@@ -2,6 +2,7 @@
 
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 
 from ledgerpilot.agent.graph import build_graph
 from ledgerpilot.agent.state import AgentState
@@ -94,3 +95,33 @@ async def test_graph_execution_verification_retry_limit():
     res = await graph.ainvoke(state)
 
     assert res["decision"] == "escalate"
+
+
+@pytest.mark.asyncio
+async def test_checkpointed_graph_resumes_saved_state():
+    graph = build_graph(checkpointer=MemorySaver())
+    state: AgentState = {
+        "break_id": "test_checkpoint",
+        "run_id": "run_checkpoint",
+        "break_context": {
+            "break_id": "test_checkpoint",
+            "break_type": BreakType.SHORT_PAYMENT,
+            "amount_at_risk_minor": 100,
+            "currency": "INR",
+            "narration": "checkpoint test",
+            "subject_ids": ["rec_1"],
+            "checkpointed": True,
+        },
+        "steps": [],
+        "tokens_used": 0,
+        "steps_used": 0,
+        "retry_count": 0,
+    }
+    config = {"configurable": {"thread_id": "test_checkpoint"}}
+
+    interrupted = await graph.ainvoke(state, config=config)
+    resumed = await graph.ainvoke(Command(resume={"action": "escalate"}), config=config)
+
+    assert "decision" not in interrupted
+    assert resumed["decision"] == "escalate"
+    assert resumed["steps_used"] == interrupted["steps_used"]

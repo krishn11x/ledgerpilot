@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command
 
 from ledgerpilot.agent.nodes.act import act
 from ledgerpilot.agent.nodes.decide import decide, decision_route
@@ -21,6 +22,7 @@ from ledgerpilot.agent.nodes.investigate import investigate, should_continue
 from ledgerpilot.agent.nodes.triage import triage
 from ledgerpilot.agent.nodes.verify import verification_route, verify
 from ledgerpilot.agent.state import AgentState
+from ledgerpilot.store.checkpoints import get_checkpointer
 from ledgerpilot.store.db import session_scope
 from ledgerpilot.store.repositories import BreakRepository
 
@@ -72,7 +74,7 @@ async def resolve_break(break_id: str, *, run_id: str) -> dict[str, Any]:
     state: AgentState = {
         "break_id": break_id,
         "run_id": run_id,
-        "break_context": {
+            "break_context": {
             "break_id": break_id,
             "break_type": brk.break_type,
             "amount_at_risk_minor": brk.amount_at_risk_minor,
@@ -80,14 +82,18 @@ async def resolve_break(break_id: str, *, run_id: str) -> dict[str, Any]:
             "narration": brk.narrative or brk.summary,
             "subject_ids": [leg.record_id for leg in brk.legs],
             "break_obj": brk,
+                "checkpointed": True,
         },
         "steps": [],
         "tokens_used": 0,
         "steps_used": 0,
         "retry_count": 0,
     }
-    graph = build_graph()
-    result = await graph.ainvoke(state)
+    graph = build_graph(checkpointer=get_checkpointer())
+    result = await graph.ainvoke(
+        state,
+        config={"configurable": {"thread_id": break_id}},
+    )
     return cast(dict[str, Any], result)
 
 
@@ -97,7 +103,9 @@ async def resume_break(break_id: str, *, action: str, actor: str, note: str = ""
     Called by ``POST /breaks/{id}/decision``. Loads the checkpoint, injects the
     human decision, and continues to ACT or terminal rejection.
     """
-    state = await resolve_break(break_id, run_id="resume")
-    state["decision"] = action
-    state["decision_reason"] = note or f"resumed by {actor}"
-    return state
+    graph = build_graph(checkpointer=get_checkpointer())
+    result = await graph.ainvoke(
+        Command(resume={"action": action, "note": note, "actor": actor}),
+        config={"configurable": {"thread_id": break_id}},
+    )
+    return cast(dict[str, Any], result)

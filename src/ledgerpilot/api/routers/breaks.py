@@ -7,14 +7,17 @@ checkpoint, so the agent's reasoning is still attached when the decision is made
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Annotated, Any, cast
+from threading import Lock
+from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
-from ledgerpilot.agent.graph import resolve_break
+from ledgerpilot.agent.graph import resolve_break, resume_break
+from ledgerpilot.api.deps import current_actor
 from ledgerpilot.api.errors import ConflictError, NotFoundError
 from ledgerpilot.api.schemas import BreakDecisionRequest
 from ledgerpilot.audit.events import AuditAction, AuditEvent
@@ -27,6 +30,9 @@ from ledgerpilot.store.db import session_scope
 from ledgerpilot.store.repositories import AuditRepository, BreakRepository, JournalRepository
 
 router = APIRouter(prefix="/breaks", tags=["breaks"])
+_investigation_lock = Lock()
+_active_investigations: set[str] = set()
+_checkpointed_breaks: set[str] = set()
 
 
 @router.get("", summary="Query the exception queue")
@@ -66,12 +72,38 @@ def get_break(break_id: str) -> dict[str, Any]:
 
 
 @router.post("/{break_id}/decision", summary="Approve, reject or reassign")
-def decide_break(break_id: str, body: BreakDecisionRequest) -> dict[str, Any]:
+def decide_break(
+    break_id: str,
+    body: BreakDecisionRequest,
+    actor: str = Depends(current_actor),
+) -> dict[str, Any]:
     """Record human decision, update break status, post journals, and append audit events.
 
     Must be idempotent and must reject a second decision on an already-decided
     break with 409 -- two reviewers clicking Approve should not post twice.
     """
+    with session_scope() as session:
+        existing = BreakRepository(session).get(break_id)
+    if (
+        existing is not None
+        and existing.status == BreakStatus.PENDING_APPROVAL
+        and break_id in _checkpointed_breaks
+        and body.action in (
+        DecisionAction.APPROVE,
+        DecisionAction.REJECT,
+        DecisionAction.ESCALATE,
+        DecisionAction.WRITE_OFF,
+        )
+    ):
+        asyncio.run(
+            resume_break(
+                break_id,
+                action=body.action.value,
+                actor=actor,
+                note=body.note,
+            )
+        )
+
     with session_scope() as session:
         repo = BreakRepository(session)
         brk = repo.get(break_id)
@@ -84,7 +116,7 @@ def decide_break(break_id: str, body: BreakDecisionRequest) -> dict[str, Any]:
         ):
             raise ConflictError(f"break {break_id!r} already decided")
 
-        actor_id = body.assignee or "human"
+        actor_id = actor
         assignee = body.assignee if body.assignee is not None else brk.assignee
 
         journal_entry_dict: dict[str, Any] | None = None
@@ -170,7 +202,29 @@ def decide_break(break_id: str, body: BreakDecisionRequest) -> dict[str, Any]:
 @router.post("/{break_id}/investigate", status_code=202, summary="Run the agent on one break")
 def investigate_break(break_id: str) -> dict[str, Any]:
     """Manually trigger the agent. Used for the live demo."""
-    return cast(
-        dict[str, Any],
-        __import__("asyncio").run(resolve_break(break_id, run_id=f"RUN-{break_id}")),
-    )
+    with session_scope() as session:
+        repo = BreakRepository(session)
+        brk = repo.get(break_id)
+        if brk is None:
+            raise NotFoundError(f"break {break_id!r} not found")
+        if brk.status != BreakStatus.OPEN:
+            raise ConflictError(f"break {break_id!r} is already being handled")
+        repo.upsert(brk.model_copy(update={"status": BreakStatus.INVESTIGATING}))
+
+    with _investigation_lock:
+        if break_id in _active_investigations:
+            raise ConflictError(f"break {break_id!r} investigation is already running")
+        _active_investigations.add(break_id)
+    try:
+        result = asyncio.run(resolve_break(break_id, run_id=f"RUN-{break_id}"))
+        with session_scope() as session:
+            brk = BreakRepository(session).get(break_id)
+            if brk is not None and brk.status == BreakStatus.INVESTIGATING:
+                BreakRepository(session).upsert(
+                    brk.model_copy(update={"status": BreakStatus.PENDING_APPROVAL})
+                )
+            _checkpointed_breaks.add(break_id)
+        return result
+    finally:
+        with _investigation_lock:
+            _active_investigations.discard(break_id)

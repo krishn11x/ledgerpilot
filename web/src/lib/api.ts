@@ -10,6 +10,7 @@
 /** Empty in dev so requests go through the Vite proxy at /api (no CORS). */
 const BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 const PREFIX = BASE ? BASE : "/api";
+const AUTH_TOKEN = import.meta.env.VITE_API_AUTH_TOKEN ?? "local-demo-token";
 
 /** Error envelope produced by `ledgerpilot.api.errors`. */
 export interface ApiErrorBody {
@@ -36,7 +37,11 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${PREFIX}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${AUTH_TOKEN}`,
+      ...init?.headers,
+    },
   });
 
   if (!res.ok) {

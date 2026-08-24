@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from langgraph.types import interrupt
+
 from ledgerpilot.agent.state import AgentState
 from ledgerpilot.config import settings
 from ledgerpilot.domain.enums import BreakType
@@ -11,9 +13,15 @@ from ledgerpilot.domain.policy import AutonomyPolicy
 async def decide(state: AgentState) -> AgentState:
     """Apply the configured autonomy policy to a verified proposal."""
 
-    confidence = float(state.get("confidence", 0.0))
-
     ctx = state.get("break_context", {})
+    if ctx.get("checkpointed"):
+        response = interrupt({"break_id": state.get("break_id"), "awaiting": "decision"})
+        action = response.get("action") if isinstance(response, dict) else response
+        state["decision"] = "auto_resolve" if action in {"approve", "write_off"} else "escalate"
+        state["decision_reason"] = f"human decision: {action}"
+        return state
+
+    confidence = float(state.get("confidence", 0.0))
 
     amount = int(
         ctx.get(
@@ -27,11 +35,9 @@ async def decide(state: AgentState) -> AgentState:
         ctx.get("break_type"),
     )
 
-    break_type = (
-    raw_type
-    if isinstance(raw_type, BreakType)
-    else BreakType(raw_type)
-)
+    if raw_type is None:
+        raise ValueError("break type is required")
+    break_type = raw_type if isinstance(raw_type, BreakType) else BreakType(str(raw_type))
 
     policy = AutonomyPolicy(
         level=int(settings.autonomy_level),

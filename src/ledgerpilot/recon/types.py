@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 from ledgerpilot.domain.models import BankTxn, Break, GatewayTxn, Match, Order, PayoutBatch
 
@@ -20,6 +21,9 @@ class ReconContext:
     amount_tolerance_minor: int = 100
     min_fuzzy_score: float = 0.82
     min_fuzzy_margin: float = 0.05
+    fx_rates: dict[tuple[str, str], Decimal] = field(
+        default_factory=lambda: {("USD", "INR"): Decimal("83.25")}
+    )
 
 
 @dataclass(slots=True)

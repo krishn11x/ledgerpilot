@@ -33,7 +33,8 @@ import time
 from datetime import UTC, datetime
 
 from ledgerpilot.domain.enums import BreakType, MatchMethod, MatchStatus
-from ledgerpilot.domain.models import Break, Match, MatchLeg
+from ledgerpilot.domain.models import Break, Match, MatchLeg, PayoutBatch
+from ledgerpilot.domain.money import FxRate, Money
 from ledgerpilot.ingest.normalize import extract_references
 from ledgerpilot.recon.classify import build_break
 from ledgerpilot.recon.keys import match_id_for
@@ -47,7 +48,11 @@ class AggregatePayoutRule:
     method = MatchMethod.AGGREGATE_PAYOUT
 
     def verify_batch_arithmetic(
-        self, ctx: ReconContext, payout_id: str, bank_amount_minor: int
+        self,
+        ctx: ReconContext,
+        payout_id: str,
+        bank_amount_minor: int,
+        bank_currency: str,
     ) -> tuple[bool, int]:
         """Verify that payout expected net matches bank credit amount."""
         payout = next((p for p in ctx.payouts if p.payout_id == payout_id), None)
@@ -60,6 +65,22 @@ class AggregatePayoutRule:
             if txns_in_batch
             else payout.expected_net_minor
         )
+        if txns_in_batch and payout.currency != bank_currency:
+            quote = next(
+                (
+                    currency
+                    for base, currency in ctx.fx_rates
+                    if base == payout.currency
+                ),
+                None,
+            )
+            if quote is not None:
+                calculated_net = FxRate(
+                    base=payout.currency,
+                    quote=quote,
+                    rate=ctx.fx_rates[(payout.currency, quote)],
+                    as_of=payout.settled_on.isoformat(),
+                ).convert(Money(calculated_net, payout.currency)).minor
         residual = bank_amount_minor - calculated_net
         return (residual == 0), residual
 
@@ -85,9 +106,20 @@ class AggregatePayoutRule:
             elif utr_ref:
                 payout = next((p for p in payout_by_id.values() if p.utr == utr_ref), None)
 
+            if payout is None:
+                candidates = [
+                    candidate
+                    for candidate in payout_by_id.values()
+                    if candidate.settled_on == bank.value_date
+                    and self._expected_bank_amount(ctx, candidate, bank.currency)
+                    == bank.amount_minor
+                ]
+                if len(candidates) == 1:
+                    payout = candidates[0]
+
             if payout and payout.payout_id in unmatched and payout.payout_id not in consumed:
                 balanced, residual = self.verify_batch_arithmetic(
-                    ctx, payout.payout_id, bank.amount_minor
+                    ctx, payout.payout_id, bank.amount_minor, bank.currency
                 )
 
                 legs = [
@@ -140,6 +172,24 @@ class AggregatePayoutRule:
             consumed_ids=consumed,
             duration_ms=duration_ms,
         )
+
+    @staticmethod
+    def _expected_bank_amount(
+        ctx: ReconContext, payout: PayoutBatch, bank_currency: str
+    ) -> int:
+        """Convert a payout's expected net into the bank account currency."""
+        payout_currency = payout.currency
+        if payout_currency == bank_currency:
+            return payout.expected_net_minor
+        rate = ctx.fx_rates.get((payout_currency, bank_currency))
+        if rate is None:
+            return -1
+        return FxRate(
+            base=payout_currency,
+            quote=bank_currency,
+            rate=rate,
+            as_of=payout.settled_on.isoformat(),
+        ).convert(Money(payout.expected_net_minor, payout_currency)).minor
 
 
 class SubsetSumRule:

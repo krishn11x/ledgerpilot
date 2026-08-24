@@ -10,10 +10,13 @@ from __future__ import annotations
 import json
 import tempfile
 import time
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 from ledgerpilot.domain.enums import BreakType
+from ledgerpilot.domain.models import PayoutBatch
+from ledgerpilot.domain.money import FxRate, Money
 from ledgerpilot.evaluation.metrics import EvalReport, compute_confusion, false_positive_match_rate
 from ledgerpilot.ingest.loaders import (
     load_bank_txns,
@@ -35,6 +38,30 @@ THRESHOLDS: dict[str, float] = {
     "min_macro_precision": 0.90,
     "min_macro_recall": 0.80,
 }
+
+
+def self_settlement_amount(
+    payout: PayoutBatch,
+    bank_currency: str,
+    fx_rates: dict[tuple[str, str], Decimal],
+) -> int:
+    """Return a payout's expected amount in the bank account currency."""
+    if payout.currency == bank_currency:
+        return payout.expected_net_minor
+    rate = fx_rates.get((payout.currency, bank_currency))
+    if rate is None:
+        return -1
+    return FxRate(
+        base=payout.currency,
+        quote=bank_currency,
+        rate=rate,
+        as_of=payout.settled_on.isoformat(),
+    ).convert(Money(payout.expected_net_minor, payout.currency)).minor
+
+
+def ordered_pair(first: str, second: str) -> tuple[str, str]:
+    """Return a stable pair key for relationship scoring."""
+    return (first, second) if first <= second else (second, first)
 
 
 def report_to_dict(report: EvalReport) -> dict[str, Any]:
@@ -96,17 +123,24 @@ def run_evaluation(scenario: str, *, with_agent: bool = False) -> EvalReport:
 
         for txn in gateway_txns:
             if txn.order_ref:
-                true_pairings.add((txn.order_ref, txn.txn_id))
+                true_pairings.add(ordered_pair(txn.order_ref, txn.txn_id))
             if txn.payout_id:
-                true_pairings.add((txn.txn_id, txn.payout_id))
+                true_pairings.add(ordered_pair(txn.txn_id, txn.payout_id))
         payout_by_utr = {p.utr: p for p in payouts if p.utr is not None}
         for bank in bank_txns:
             refs = bank.utr
-            if not refs:
-                continue
-            payout = payout_by_utr.get(refs)
+            payout = payout_by_utr.get(refs) if refs else None
+            if payout is None:
+                candidates = [
+                    candidate
+                    for candidate in payouts
+                    if candidate.settled_on == bank.value_date
+                    and self_settlement_amount(candidate, bank.currency, ctx.fx_rates)
+                    == bank.amount_minor
+                ]
+                payout = candidates[0] if len(candidates) == 1 else None
             if payout is not None:
-                true_pairings.add((payout.payout_id, bank.bank_txn_id))
+                true_pairings.add(ordered_pair(payout.payout_id, bank.bank_txn_id))
 
         confusion = compute_confusion(predicted_breaks, actual_breaks)
         committed_matches: list[tuple[str, str]] = []
@@ -114,7 +148,7 @@ def run_evaluation(scenario: str, *, with_agent: bool = False) -> EvalReport:
             if match.status.value != "confirmed":
                 continue
             committed_matches.extend(
-                (left.record_id, right.record_id)
+                ordered_pair(left.record_id, right.record_id)
                 for index, left in enumerate(match.legs)
                 for right in match.legs[index + 1 :]
             )

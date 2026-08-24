@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from ledgerpilot import __version__
 from ledgerpilot.api.deps import require_auth
 from ledgerpilot.api.errors import register_exception_handlers
-from ledgerpilot.api.routers import audit, breaks, health, ledger, matches, metrics, runs, scenarios
+from ledgerpilot.api.routers import audit, breaks, health, ledger, matches, metrics, runs, scenarios, upload
 from ledgerpilot.config import settings
 from ledgerpilot.logging import configure_logging, get_logger
 from ledgerpilot.store.db import create_all
@@ -87,6 +87,7 @@ def create_app() -> FastAPI:
     app.include_router(audit.router, dependencies=[Depends(require_auth)])
     app.include_router(metrics.router, dependencies=[Depends(require_auth)])
     app.include_router(scenarios.router, dependencies=[Depends(require_auth)])
+    app.include_router(upload.router, dependencies=[Depends(require_auth)])
 
     @app.get("/", tags=["meta"], summary="Service banner")
     def root() -> dict[str, Any]:

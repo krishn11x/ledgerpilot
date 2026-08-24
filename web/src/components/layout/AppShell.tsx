@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 
 import Sidebar from "./Sidebar";
 import { api } from "../../lib/api";
@@ -52,14 +53,24 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
 
           <div className="flex items-center gap-4 text-xs">
+            <Link
+              to="/workflow"
+              className="rounded-full bg-accent px-3 py-1.5 font-medium text-canvas"
+            >
+              Get Started
+            </Link>
             <Pill
-              label={
-                health ? AUTONOMY_LABELS[health.autonomy_level] ?? "unknown" : "autonomy ..."
-              }
+              label="Auto-resolution enabled"
+              title={health ? AUTONOMY_LABELS[health.autonomy_level] ?? "unknown" : "autonomy ..."}
             />
             <Pill
-              label={health?.agent_available ? "agent online" : "agent offline"}
+              label={
+                health?.agent_available
+                  ? "Agent ready"
+                  : "External LLM not configured — deterministic agent mode available."
+              }
               tone={health?.agent_available ? "good" : "muted"}
+              title={health?.agent_available ? "LLM integration is configured" : "No external LLM key configured; deterministic mode remains active."}
             />
             <span className="flex items-center gap-1.5 text-ink-faint">
               <span
@@ -79,9 +90,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
-function Pill({ label, tone = "muted" }: { label: string; tone?: "good" | "muted" }) {
+function Pill({ label, tone = "muted", title }: { label: string; tone?: "good" | "muted"; title?: string }) {
   return (
     <span
+      title={title}
       className={`rounded-full border border-border-subtle px-2.5 py-1 ${
         tone === "good" ? "text-sev-low" : "text-ink-muted"
       }`}

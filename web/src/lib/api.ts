@@ -35,13 +35,18 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
+  const headers = new Headers(init?.headers ?? {});
+
+  if (!isFormData) {
+    headers.set("Content-Type", "application/json");
+  }
+  headers.set("Authorization", `Bearer ${AUTH_TOKEN}`);
+
   const res = await fetch(`${PREFIX}${path}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${AUTH_TOKEN}`,
-      ...init?.headers,
-    },
+    headers,
+    body: isFormData ? init?.body : init?.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
 
   if (!res.ok) {
@@ -64,13 +69,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, {
-      method: "POST",
-      // Spread rather than `body: undefined` -- exactOptionalPropertyTypes
-      // distinguishes "absent" from "explicitly undefined".
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    }),
+  post: <T>(path: string, body?: unknown) => {
+    const init: RequestInit = { method: "POST" };
+    if (body !== undefined) {
+      if (body instanceof FormData) {
+        init.body = body;
+      } else {
+        init.body = JSON.stringify(body);
+      }
+    }
+    return request<T>(path, init);
+  },
 };
 
 /**

@@ -11,6 +11,24 @@ export default function Exceptions() {
   const decide = useDecideBreak();
   if (breaks.isLoading) return <p className="text-sm text-ink-muted">Loading exception queue...</p>;
   if (breaks.isError || !breaks.data) return <p className="text-sm text-sev-high">Exception queue unavailable. Start a reconciliation run first.</p>;
+
+  if (breaks.data.total === 0) {
+    return (
+      <div className="mx-auto max-w-3xl space-y-4">
+        <header>
+          <p className="text-xs uppercase tracking-[0.2em] text-accent">Controller inbox</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight">No open exceptions.</h1>
+        </header>
+        <div className="border border-border-subtle bg-surface p-6 text-sm text-ink-muted">
+          <p>Run a reconciliation to review residuals.</p>
+          <Link to="/workflow" className="mt-4 inline-block bg-accent px-4 py-2 text-sm font-medium text-canvas">
+            Start Reconciliation
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <header className="flex items-end justify-between gap-4">

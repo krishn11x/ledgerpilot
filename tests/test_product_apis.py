@@ -3,7 +3,9 @@
 from datetime import UTC, datetime
 
 import pytest
+from fastapi.testclient import TestClient
 
+from ledgerpilot.api.main import create_app
 from ledgerpilot.domain.enums import MatchMethod, MatchStatus
 from ledgerpilot.domain.models import JournalEntry, JournalLine, Match, MatchLeg
 from ledgerpilot.store.db import create_all, session_scope
@@ -123,6 +125,56 @@ def test_get_metrics(client: object) -> None:
 def test_get_metrics_invalid_scenario_404(client: object) -> None:
     resp = client.get("/metrics?scenario=invalid_scen")
     assert resp.status_code == 404
+
+
+def test_upload_requires_auth(client: object) -> None:
+    with TestClient(create_app()) as unauthenticated:
+        response = unauthenticated.post(
+            "/upload",
+            files={
+                "orders": ("orders.csv", b"order_id,customer_id,gross_minor,currency,placed_at,status\nA1,C1,1000,INR,2024-01-01T00:00:00Z,paid\n"),
+                "gateway_txns": ("gateway_txns.csv", b"txn_id,order_ref,gross_minor,fee_minor,tax_minor,net_minor,currency,status,payout_id,captured_at\nG1,A1,1000,0,0,1000,INR,paid,,2024-01-01T00:00:00Z\n"),
+                "payouts": ("payouts.csv", b"payout_id,expected_net_minor,txn_count,currency,settled_on,utr\nP1,1000,1,INR,2024-01-01,UTR-1\n"),
+                "bank_txns": ("bank_txns.csv", b"bank_txn_id,value_date,amount,direction,currency,narration,utr\nB1,2024-01-01,1000,credit,INR,Gateway settlement,UTR-1\n"),
+            },
+        )
+        assert response.status_code == 401
+
+
+def test_upload_accepts_real_data_and_returns_run(client: object) -> None:
+    files = {
+        "orders": ("orders.csv", open("data/synthetic/smoke/orders.csv", "rb")),
+        "gateway_txns": ("gateway_txns.csv", open("data/synthetic/smoke/gateway_txns.csv", "rb")),
+        "payouts": ("payouts.csv", open("data/synthetic/smoke/payouts.csv", "rb")),
+        "bank_txns": ("bank_txns.csv", open("data/synthetic/smoke/bank_txns.csv", "rb")),
+    }
+    try:
+        resp = client.post("/upload", files=files)
+    finally:
+        for file in files.values():
+            file[1].close()
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["run_id"]
+    assert data["status"] in {"completed", "running"}
+    assert data["counts"]["breaks"] >= 0
+
+
+def test_upload_rejects_invalid_extension(client: object) -> None:
+    resp = client.post(
+        "/upload",
+        files={
+            "orders": ("orders.txt", b"abc"),
+            "gateway_txns": ("gateway_txns.csv", b"txn_id,order_ref,gross_minor,fee_minor,tax_minor,net_minor,currency,status,payout_id,captured_at\nG1,A1,1000,0,0,1000,INR,paid,,2024-01-01T00:00:00Z\n"),
+            "payouts": ("payouts.csv", b"payout_id,expected_net_minor,txn_count,currency,settled_on,utr\nP1,1000,1,INR,2024-01-01,UTR-1\n"),
+            "bank_txns": ("bank_txns.csv", b"bank_txn_id,value_date,amount,direction,currency,narration,utr\nB1,2024-01-01,1000,credit,INR,Gateway settlement,UTR-1\n"),
+        },
+    )
+    assert resp.status_code == 400
+    payload = resp.json()
+    assert "CSV or XLSX" in payload["error"]["message"]
+    assert "CSV or XLSX" in str(payload["error"]["detail"] or "")
 
 
 def test_dashboard_metrics(client: object) -> None:

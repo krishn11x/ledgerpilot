@@ -53,7 +53,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _domain_error(_r: Request, exc: LedgerPilotError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
-            content=_envelope(exc.code, str(exc)),
+            content=_envelope(exc.code, str(exc), str(exc)),
         )
 
     @app.exception_handler(NotImplementedError)

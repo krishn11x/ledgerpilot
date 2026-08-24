@@ -27,6 +27,7 @@ dependencies = [
     "anthropic>=0.39.0",
     # ---- Reconciliation & data ------------------------------------------
     "pandas>=2.2.3",
+    "openpyxl>=3.1.5",
     "rapidfuzz>=3.10.1",
     "python-dateutil>=2.9.0",
     # ---- Synthetic data --------------------------------------------------

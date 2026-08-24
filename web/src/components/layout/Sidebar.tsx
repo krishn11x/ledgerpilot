@@ -7,6 +7,7 @@ import { NavLink } from "react-router-dom";
  * the exception queue is the daily job, the dashboard is a weekly glance.
  */
 const NAV = [
+  { to: "/workflow", label: "Workflow", hint: "Get started and run a reconciliation" },
   { to: "/exceptions", label: "Exceptions", hint: "Breaks needing a decision" },
   { to: "/dashboard", label: "Dashboard", hint: "Match rate and value at risk" },
   { to: "/ledger", label: "Journal", hint: "Proposed and posted entries" },

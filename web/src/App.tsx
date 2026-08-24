@@ -6,6 +6,8 @@ import Exceptions from "./pages/Exceptions";
 import BreakDetail from "./pages/BreakDetail";
 import Ledger from "./pages/Ledger";
 import AuditLog from "./pages/AuditLog";
+import Workflow from "./pages/Workflow";
+import Results from "./pages/Results";
 
 /**
  * Route table.
@@ -18,13 +20,15 @@ export default function App() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<Navigate to="/exceptions" replace />} />
+        <Route path="/" element={<Navigate to="/workflow" replace />} />
+        <Route path="/workflow" element={<Workflow />} />
+        <Route path="/results/:runId" element={<Results />} />
         <Route path="/exceptions" element={<Exceptions />} />
         <Route path="/exceptions/:breakId" element={<BreakDetail />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/ledger" element={<Ledger />} />
         <Route path="/audit" element={<AuditLog />} />
-        <Route path="*" element={<Navigate to="/exceptions" replace />} />
+        <Route path="*" element={<Navigate to="/workflow" replace />} />
       </Routes>
     </AppShell>
   );

@@ -1,39 +1,131 @@
-"""Hash chaining and integrity verification. PLACEHOLDER -- signatures only.
+"""Hash chaining and audit-log integrity verification.
 
-Each event's hash covers its own content plus the previous event's hash, so
-altering any historical event invalidates every hash after it. Cheap to
-compute, cheap to verify, and impossible to fake without replacing the whole
-tail of the log.
-
-Not a blockchain and not trying to be -- a single-writer hash chain is the
-right amount of machinery for a tamper-*evident* internal control.
+Each event hash covers the event content plus the previous event hash.
+Changing any historical event therefore breaks the chain from that point
+forward.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+from datetime import UTC, datetime
 from typing import Any
 
 GENESIS_HASH = "0" * 64
 
 
 def canonical_json(payload: dict[str, Any]) -> str:
-    """TODO: deterministic serialisation -- sorted keys, no whitespace, UTC.
+    """Serialize a logical event deterministically."""
 
-    Determinism is the whole requirement: the same logical event must always
-    produce the same bytes, or verification produces false alarms.
-    """
-    raise NotImplementedError
+    def _default(value: Any) -> Any:
+        if isinstance(value, datetime):
+            timestamp = (
+                value.astimezone(UTC)
+                if value.tzinfo is not None
+                else value.replace(tzinfo=UTC)
+            )
+            return timestamp.isoformat().replace("+00:00", "Z")
+
+        if hasattr(value, "value"):
+            return value.value
+
+        raise TypeError(
+            f"not JSON serialisable: {type(value).__name__}"
+        )
+
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_default,
+    )
 
 
 def hash_event(payload: dict[str, Any], prev_hash: str) -> str:
-    """TODO: sha256(canonical_json(payload) + prev_hash), hex-encoded."""
-    raise NotImplementedError
+    """Return the SHA-256 hash of canonical event content plus prev hash."""
+
+    message = (
+        canonical_json(payload) + prev_hash
+    ).encode("utf-8")
+
+    return hashlib.sha256(message).hexdigest()
+
+
+def _event_payload(event: Any) -> dict[str, Any]:
+    """Reconstruct the exact logical fields covered by AuditEvent hashing."""
+
+    # AuditEvent dataclass.
+    if hasattr(event, "event_id") and hasattr(event, "ts"):
+        return {
+            "event_id": event.event_id,
+            "ts": event.ts,
+            "actor": event.actor,
+            "actor_id": event.actor_id,
+            "action": event.action,
+            "subject_ids": list(event.subject_ids),
+            "payload": dict(event.payload),
+            "rationale": event.rationale,
+            "confidence": event.confidence,
+            "inputs_hash": event.inputs_hash,
+            "prev_event_hash": event.prev_event_hash,
+        }
+
+    # Persisted AuditEventRow.
+    if hasattr(event, "event_id") and hasattr(event, "timestamp"):
+        payload = dict(event.payload or {})
+
+        return {
+            "event_id": event.event_id,
+            "ts": event.timestamp,
+            "actor": event.actor,
+            "actor_id": payload.get("actor_id", ""),
+            "action": event.event_type,
+            "subject_ids": list(
+                payload.get("subject_ids", [])
+            ),
+            "payload": dict(
+                payload.get("payload", {})
+            ),
+            "rationale": payload.get("rationale", ""),
+            "confidence": payload.get("confidence"),
+            "inputs_hash": payload.get("inputs_hash", ""),
+            "prev_event_hash": event.prev_hash,
+        }
+
+    raise TypeError(
+        f"unsupported audit event type: {type(event).__name__}"
+    )
 
 
 def verify_chain(events: list[Any]) -> tuple[bool, int | None]:
-    """TODO: return (intact, first_broken_index).
+    """Verify the full audit chain.
 
-    Surfaced in the UI as a green/red integrity badge on the audit log -- an
-    auditor can confirm the log has not been edited without reading it.
+    Returns:
+        ``(True, None)`` when every event is intact.
+        ``(False, index)`` for the first broken event.
     """
-    raise NotImplementedError
+
+    prev_hash = GENESIS_HASH
+
+    for index, event in enumerate(events):
+        event_hash = (
+            getattr(event, "event_hash", None)
+            or getattr(event, "hash", "")
+        )
+
+        if not event_hash:
+            return False, index
+
+        try:
+            payload = _event_payload(event)
+            expected_hash = hash_event(payload, prev_hash)
+        except Exception:
+            return False, index
+
+        if expected_hash != event_hash:
+            return False, index
+
+        prev_hash = event_hash
+
+    return True, None

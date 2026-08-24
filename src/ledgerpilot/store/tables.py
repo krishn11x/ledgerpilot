@@ -68,10 +68,12 @@ from ledgerpilot.domain.models import (
     Break,
     GatewayTxn,
     JournalEntry,
+    JournalLine,
     Match,
     MatchLeg,
     Order,
     PayoutBatch,
+    ReconRun,
 )
 from ledgerpilot.store.base import Base, TimestampMixin
 
@@ -531,6 +533,16 @@ class ReconRunRow(Base):
     autonomy_level: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     counts: Mapped[dict[str, int]] = mapped_column(JSON, nullable=False, default=dict)
 
+    def to_domain(self) -> ReconRun:
+        return ReconRun(
+            run_id=self.run_id,
+            started_at=_as_utc(self.started_at),
+            finished_at=_as_utc(self.finished_at) if self.finished_at is not None else None,
+            status=self.status,
+            autonomy_level=self.autonomy_level,
+            counts=self.counts,
+        )
+
 
 class JournalEntryRow(Base, TimestampMixin):
     """Double-entry journal posting ORM row."""
@@ -561,6 +573,18 @@ class JournalEntryRow(Base, TimestampMixin):
             "approved_by": record.approved_by,
         }
 
+    def to_domain(self) -> JournalEntry:
+        return JournalEntry(
+            entry_id=self.entry_id,
+            break_id=self.break_id,
+            lines=[JournalLine(**line_dict) for line_dict in self.lines],
+            status=self.status,
+            posting_date=self.posting_date,
+            rationale=self.rationale,
+            proposed_by=self.proposed_by,
+            approved_by=self.approved_by,
+        )
+
 
 class AuditEventRow(Base):
     """Tamper-evident hash-chained audit event ORM row."""
@@ -581,3 +605,20 @@ class AuditEventRow(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     prev_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+    def to_domain(self) -> Any:
+        from ledgerpilot.audit.events import AuditAction, AuditEvent
+
+        return AuditEvent(
+            event_id=self.event_id,
+            ts=_as_utc(self.timestamp),
+            actor=self.actor,
+            actor_id=self.payload.get("actor_id", ""),
+            action=AuditAction(self.event_type),
+            subject_ids=list(self.payload.get("subject_ids", [])),
+            payload=dict(self.payload.get("payload", {})),
+            rationale=self.payload.get("rationale", ""),
+            confidence=self.payload.get("confidence"),
+            prev_event_hash=self.prev_hash,
+            event_hash=self.hash,
+        )

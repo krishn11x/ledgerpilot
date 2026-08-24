@@ -1,21 +1,11 @@
 """Repository layer: the only code that issues queries.
 
-Repositories exist so that the reconciliation engine and the agent's tools can
-be handed a narrow, typed data-access interface rather than a Session. Two
-payoffs: the engine can be tested against in-memory fakes, and the agent's
-tool surface can be made provably read-only by construction.
+Repositories expose narrow, typed data-access interfaces instead of leaking
+SQLAlchemy Sessions into domain, reconciliation, or agent logic.
 
-Every repository takes a ``Session`` and never opens one. Transaction control
-belongs to the caller -- a repository that committed on its own behalf would
-make "every write pairs with an audit event in the same transaction"
-unenforceable.
-
-Upserts are written to be **backend-portable**: no ``ON CONFLICT``, no
-``INSERT ... ON DUPLICATE KEY``. Existing primary keys are read once, the batch
-is partitioned into inserts and updates, and each half goes out as a single
-ORM-enabled executemany. The ``IN`` clause is chunked because SQLite caps bound
-parameters per statement and an 8,000-order batch would blow straight through
-that limit.
+Transaction ownership stays with the caller. Repositories never commit on
+their own, which allows business changes and their audit events to be committed
+atomically.
 """
 
 from __future__ import annotations
@@ -27,7 +17,13 @@ from typing import Any, Protocol, TypeVar
 from sqlalchemy import func, insert, select, update
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
-from ledgerpilot.domain.enums import BreakStatus, BreakType
+from ledgerpilot.audit.events import AuditAction, AuditEvent
+from ledgerpilot.domain.enums import (
+    BreakStatus,
+    BreakType,
+    DecisionActor,
+    JournalEntryStatus,
+)
 from ledgerpilot.domain.models import (
     BankTxn,
     Break,
@@ -36,8 +32,10 @@ from ledgerpilot.domain.models import (
     Match,
     Order,
     PayoutBatch,
+    ReconRun,
 )
 from ledgerpilot.store.tables import (
+    AuditEventRow,
     BankTxnRow,
     BreakRow,
     GatewayTxnRow,
@@ -48,56 +46,59 @@ from ledgerpilot.store.tables import (
     OrderRow,
     PayoutBatchRow,
     QuarantinedRowRow,
+    ReconRunRow,
 )
 
-#: Bound-parameter ceiling for a chunked ``IN`` clause. SQLite's historical
-#: limit is 999; staying well inside it keeps the same code correct on both
-#: backends without dialect sniffing.
 _IN_CHUNK = 400
-
 _T = TypeVar("_T")
 
 
-def _chunks(items: Sequence[_T], size: int) -> Iterator[Sequence[_T]]:
+def _chunks(
+    items: Sequence[_T],
+    size: int,
+) -> Iterator[Sequence[_T]]:
+    """Yield fixed-size chunks for bounded IN clauses."""
     for start in range(0, len(items), size):
         yield items[start : start + size]
 
 
 class ReadOnlyRepository(Protocol):
-    """The surface exposed to the agent. Deliberately has no write methods.
-
-    Making this a Protocol with no mutators means an agent tool that tries to
-    write fails at type-check time, not at runtime in front of judges.
-    """
+    """Read-only interface exposed to the agent."""
 
     def get_order(self, order_id: str) -> Order | None: ...
+
     def get_gateway_txn(self, txn_id: str) -> GatewayTxn | None: ...
+
     def get_bank_txn(self, bank_txn_id: str) -> BankTxn | None: ...
+
     def get_payout(self, payout_id: str) -> PayoutBatch | None: ...
 
     def search_orders(
-        self, *, amount_minor: int | None = None, customer_id: str | None = None
+        self,
+        *,
+        amount_minor: int | None = None,
+        customer_id: str | None = None,
     ) -> list[Order]: ...
 
     def search_gateway_txns(
-        self, *, order_ref: str | None = None, payout_id: str | None = None
+        self,
+        *,
+        order_ref: str | None = None,
+        payout_id: str | None = None,
     ) -> list[GatewayTxn]: ...
 
-    def search_bank_txns(self, *, narration_contains: str | None = None) -> list[BankTxn]: ...
+    def search_bank_txns(
+        self,
+        *,
+        narration_contains: str | None = None,
+    ) -> list[BankTxn]: ...
 
 
 class _Repository:
-    """Shared session handling and the portable upsert.
-
-    Subclasses declare their row class, primary-key column and value mapper;
-    everything else about writing is identical between them, and duplicating it
-    four times is how the four tables drift apart.
-    """
+    """Shared session handling and portable upsert behavior."""
 
     def __init__(self, session: Session) -> None:
         self.session = session
-
-    # -- Writing ------------------------------------------------------------
 
     def _upsert(
         self,
@@ -106,42 +107,52 @@ class _Repository:
         mappings: list[dict[str, Any]],
         pk_name: str,
     ) -> int:
-        """Insert new rows, update existing ones, return the number written.
-
-        Idempotent by construction: re-ingesting the same file twice writes the
-        same rows and leaves the row count unchanged, which is what lets a demo
-        be re-run without wiping the database first.
-        """
+        """Insert new rows and update existing rows idempotently."""
         if not mappings:
             return 0
 
-        # Last write wins on a duplicate key inside a single batch. An
-        # executemany that contained the same primary key twice would either
-        # fail or silently apply in arbitrary order.
         deduped: dict[Any, dict[str, Any]] = {}
         for mapping in mappings:
             deduped[mapping[pk_name]] = mapping
 
         ids = list(deduped)
         existing: set[Any] = set()
-        for chunk in _chunks(ids, _IN_CHUNK):
-            existing.update(self.session.scalars(select(pk).where(pk.in_(chunk))).all())
 
-        to_insert = [m for key, m in deduped.items() if key not in existing]
-        to_update = [m for key, m in deduped.items() if key in existing]
+        for chunk in _chunks(ids, _IN_CHUNK):
+            existing.update(
+                self.session.scalars(
+                    select(pk).where(pk.in_(chunk))
+                ).all()
+            )
+
+        to_insert = [
+            mapping
+            for key, mapping in deduped.items()
+            if key not in existing
+        ]
+
+        to_update = [
+            mapping
+            for key, mapping in deduped.items()
+            if key in existing
+        ]
 
         if to_insert:
             self.session.execute(insert(row_cls), to_insert)
+
         if to_update:
             self.session.execute(update(row_cls), to_update)
 
         self.session.flush()
         return len(to_insert) + len(to_update)
 
-    # -- Reading ------------------------------------------------------------
-
     def _count(self, row_cls: type) -> int:
-        return int(self.session.scalar(select(func.count()).select_from(row_cls)) or 0)
+        return int(
+            self.session.scalar(
+                select(func.count()).select_from(row_cls)
+            )
+            or 0
+        )
 
 
 class OrderRepository(_Repository):
@@ -149,7 +160,10 @@ class OrderRepository(_Repository):
 
     def bulk_upsert(self, orders: list[Order]) -> int:
         return self._upsert(
-            OrderRow, OrderRow.order_id, [OrderRow.values(o) for o in orders], "order_id"
+            OrderRow,
+            OrderRow.order_id,
+            [OrderRow.values(order) for order in orders],
+            "order_id",
         )
 
     def get(self, order_id: str) -> Order | None:
@@ -157,12 +171,16 @@ class OrderRepository(_Repository):
         return row.to_domain() if row is not None else None
 
     def all(self) -> list[Order]:
-        rows = self.session.scalars(select(OrderRow).order_by(OrderRow.order_id)).all()
+        rows = self.session.scalars(
+            select(OrderRow).order_by(OrderRow.order_id)
+        ).all()
         return [row.to_domain() for row in rows]
 
     def by_customer(self, customer_id: str) -> list[Order]:
         rows = self.session.scalars(
-            select(OrderRow).where(OrderRow.customer_id == customer_id).order_by(OrderRow.order_id)
+            select(OrderRow)
+            .where(OrderRow.customer_id == customer_id)
+            .order_by(OrderRow.order_id)
         ).all()
         return [row.to_domain() for row in rows]
 
@@ -175,7 +193,10 @@ class GatewayRepository(_Repository):
 
     def bulk_upsert(self, txns: list[GatewayTxn]) -> int:
         return self._upsert(
-            GatewayTxnRow, GatewayTxnRow.txn_id, [GatewayTxnRow.values(t) for t in txns], "txn_id"
+            GatewayTxnRow,
+            GatewayTxnRow.txn_id,
+            [GatewayTxnRow.values(txn) for txn in txns],
+            "txn_id",
         )
 
     def get(self, txn_id: str) -> GatewayTxn | None:
@@ -183,11 +204,13 @@ class GatewayRepository(_Repository):
         return row.to_domain() if row is not None else None
 
     def all(self) -> list[GatewayTxn]:
-        rows = self.session.scalars(select(GatewayTxnRow).order_by(GatewayTxnRow.txn_id)).all()
+        rows = self.session.scalars(
+            select(GatewayTxnRow).order_by(GatewayTxnRow.txn_id)
+        ).all()
         return [row.to_domain() for row in rows]
 
     def for_order(self, order_ref: str) -> list[GatewayTxn]:
-        """Every capture against one order. More than one is a duplicate."""
+        """Every capture against one order."""
         rows = self.session.scalars(
             select(GatewayTxnRow)
             .where(GatewayTxnRow.order_ref == order_ref)
@@ -204,12 +227,7 @@ class GatewayRepository(_Repository):
         return [row.to_domain() for row in rows]
 
     def unsettled(self) -> list[GatewayTxn]:
-        """Captured transactions with no payout -- UNSETTLED candidates.
-
-        Filtered on ``status`` as well as ``payout_id``: a refunded or failed
-        transaction that never settled is correct, not a break, and returning
-        it here would manufacture exceptions out of normal lifecycle.
-        """
+        """Captured transactions with no payout."""
         rows = self.session.scalars(
             select(GatewayTxnRow)
             .where(GatewayTxnRow.payout_id.is_(None))
@@ -223,13 +241,13 @@ class GatewayRepository(_Repository):
 
 
 class PayoutRepository(_Repository):
-    """Settlement batches: the N:1 bridge between captures and bank credits."""
+    """Settlement batches: the N:1 bridge to bank credits."""
 
     def bulk_upsert(self, payouts: list[PayoutBatch]) -> int:
         return self._upsert(
             PayoutBatchRow,
             PayoutBatchRow.payout_id,
-            [PayoutBatchRow.values(p) for p in payouts],
+            [PayoutBatchRow.values(payout) for payout in payouts],
             "payout_id",
         )
 
@@ -238,7 +256,9 @@ class PayoutRepository(_Repository):
         return row.to_domain() if row is not None else None
 
     def all(self) -> list[PayoutBatch]:
-        rows = self.session.scalars(select(PayoutBatchRow).order_by(PayoutBatchRow.payout_id)).all()
+        rows = self.session.scalars(
+            select(PayoutBatchRow).order_by(PayoutBatchRow.payout_id)
+        ).all()
         return [row.to_domain() for row in rows]
 
     def by_utr(self, utr: str) -> list[PayoutBatch]:
@@ -260,7 +280,7 @@ class BankRepository(_Repository):
         return self._upsert(
             BankTxnRow,
             BankTxnRow.bank_txn_id,
-            [BankTxnRow.values(t) for t in txns],
+            [BankTxnRow.values(txn) for txn in txns],
             "bank_txn_id",
         )
 
@@ -269,17 +289,20 @@ class BankRepository(_Repository):
         return row.to_domain() if row is not None else None
 
     def all(self) -> list[BankTxn]:
-        rows = self.session.scalars(select(BankTxnRow).order_by(BankTxnRow.bank_txn_id)).all()
+        rows = self.session.scalars(
+            select(BankTxnRow).order_by(BankTxnRow.bank_txn_id)
+        ).all()
         return [row.to_domain() for row in rows]
 
     def by_utr(self, utr: str) -> list[BankTxn]:
         rows = self.session.scalars(
-            select(BankTxnRow).where(BankTxnRow.utr == utr).order_by(BankTxnRow.bank_txn_id)
+            select(BankTxnRow)
+            .where(BankTxnRow.utr == utr)
+            .order_by(BankTxnRow.bank_txn_id)
         ).all()
         return [row.to_domain() for row in rows]
 
     def search_narration(self, fragment: str) -> list[BankTxn]:
-        """Substring search over raw narration. Case-insensitive."""
         rows = self.session.scalars(
             select(BankTxnRow)
             .where(BankTxnRow.narration.ilike(f"%{fragment}%"))
@@ -288,10 +311,11 @@ class BankRepository(_Repository):
         return [row.to_domain() for row in rows]
 
     def with_utr_count(self) -> int:
-        """How many lines had a UTR recovered. The normalisation yield."""
         return int(
             self.session.scalar(
-                select(func.count()).select_from(BankTxnRow).where(BankTxnRow.utr.is_not(None))
+                select(func.count())
+                .select_from(BankTxnRow)
+                .where(BankTxnRow.utr.is_not(None))
             )
             or 0
         )
@@ -300,34 +324,23 @@ class BankRepository(_Repository):
         return self._count(BankTxnRow)
 
 
-# ---------------------------------------------------------------------------
-# Ground truth and ingest hygiene
-# ---------------------------------------------------------------------------
-
-
 class GroundTruthRepository(_Repository):
-    """The answer key.
-
-    Read only by ``evaluation``. Nothing in ``recon`` or ``agent`` may query
-    this -- a rule that consulted the labels would score perfectly and prove
-    nothing, so the separation is the whole value of having ground truth.
-    """
+    """Ground-truth answer key for evaluation only."""
 
     def bulk_upsert(self, labels: Iterable[Any]) -> int:
-        """Persist ``synth.breaks.GroundTruthLabel`` records.
-
-        Typed loosely on purpose: importing ``synth`` from ``store`` would
-        invert the layering (``synth`` sits above ``store``). The label's own
-        ``as_row`` method supplies the column mapping, so the dependency points
-        the right way.
-        """
         mappings = [label.as_row() for label in labels]
-        return self._upsert(GroundTruthLabelRow, GroundTruthLabelRow.label_id, mappings, "label_id")
+        return self._upsert(
+            GroundTruthLabelRow,
+            GroundTruthLabelRow.label_id,
+            mappings,
+            "label_id",
+        )
 
     def all_rows(self) -> list[GroundTruthLabelRow]:
         return list(
             self.session.scalars(
-                select(GroundTruthLabelRow).order_by(GroundTruthLabelRow.label_id)
+                select(GroundTruthLabelRow)
+                .order_by(GroundTruthLabelRow.label_id)
             ).all()
         )
 
@@ -335,7 +348,6 @@ class GroundTruthRepository(_Repository):
         return self._count(GroundTruthLabelRow)
 
     def break_count(self) -> int:
-        """Labels that describe an actual break, excluding noise markers."""
         return int(
             self.session.scalar(
                 select(func.count())
@@ -347,18 +359,24 @@ class GroundTruthRepository(_Repository):
 
     def counts_by_type(self) -> dict[str, int]:
         rows = self.session.execute(
-            select(GroundTruthLabelRow.break_type, func.count())
+            select(
+                GroundTruthLabelRow.break_type,
+                func.count(),
+            )
             .group_by(GroundTruthLabelRow.break_type)
             .order_by(GroundTruthLabelRow.break_type)
         ).all()
-        return {(str(bt) if bt is not None else "none"): int(n) for bt, n in rows}
+
+        return {
+            str(break_type) if break_type is not None else "none": int(count)
+            for break_type, count in rows
+        }
 
 
 class QuarantineRepository(_Repository):
-    """Rows that failed validation. Append-only within a run."""
+    """Rows rejected during ingestion validation."""
 
     def add_many(self, run_id: str, rows: Iterable[Any]) -> int:
-        """Store ``ingest.validate.QuarantinedRow`` records against a run."""
         mappings = [
             {
                 "run_id": run_id,
@@ -369,9 +387,14 @@ class QuarantineRepository(_Repository):
             }
             for row in rows
         ]
+
         if not mappings:
             return 0
-        self.session.execute(insert(QuarantinedRowRow), mappings)
+
+        self.session.execute(
+            insert(QuarantinedRowRow),
+            mappings,
+        )
         self.session.flush()
         return len(mappings)
 
@@ -389,10 +412,15 @@ class QuarantineRepository(_Repository):
 
 
 class IngestRunRepository(_Repository):
-    """Run headers, so a set of rows can be traced to the file that produced it."""
+    """Ingestion run headers."""
 
     def start(
-        self, run_id: str, *, source_dir: str, started_at: datetime, scenario: str | None = None
+        self,
+        run_id: str,
+        *,
+        source_dir: str,
+        started_at: datetime,
+        scenario: str | None = None,
     ) -> None:
         self.session.execute(
             insert(IngestRunRow),
@@ -418,17 +446,20 @@ class IngestRunRepository(_Repository):
         counts: dict[str, int],
         status: str = "completed",
     ) -> None:
-        self.session.execute(
-            update(IngestRunRow),
-            [
-                {
-                    "run_id": run_id,
-                    "finished_at": finished_at,
-                    "counts": counts,
-                    "status": status,
-                }
-            ],
+        """Finish exactly one ingestion run."""
+        result = self.session.execute(
+            update(IngestRunRow)
+            .where(IngestRunRow.run_id == run_id)
+            .values(
+                finished_at=finished_at,
+                counts=counts,
+                status=status,
+            )
         )
+
+        if result.rowcount != 1:
+            raise KeyError(f"unknown ingest run {run_id!r}")
+
         self.session.flush()
 
     def get(self, run_id: str) -> IngestRunRow | None:
@@ -436,39 +467,43 @@ class IngestRunRepository(_Repository):
 
     def latest(self) -> IngestRunRow | None:
         return self.session.scalars(
-            select(IngestRunRow).order_by(IngestRunRow.started_at.desc()).limit(1)
+            select(IngestRunRow)
+            .order_by(IngestRunRow.started_at.desc())
+            .limit(1)
         ).first()
 
     def count(self) -> int:
         return self._count(IngestRunRow)
 
 
-# ---------------------------------------------------------------------------
-# Later phases
-# ---------------------------------------------------------------------------
-
-
 class MatchRepository(_Repository):
-    """Writes are idempotent on the content-hashed match_id."""
+    """Reconciliation matches."""
 
     def upsert(self, match: Match) -> None:
-        values = MatchRow.values(match)
-        row = MatchRow(**values)
-        self.session.merge(row)
+        self.session.merge(MatchRow(**MatchRow.values(match)))
+        self.session.flush()
 
     def get(self, match_id: str) -> Match | None:
         row = self.session.get(MatchRow, match_id)
         return row.to_domain() if row else None
 
-    def for_record(self, record_type: str, record_id: str) -> list[Match]:
-        statement = select(MatchRow)
-        rows = self.session.scalars(statement).all()
+    def for_record(
+        self,
+        record_type: str,
+        record_id: str,
+    ) -> list[Match]:
+        rows = self.session.scalars(select(MatchRow)).all()
+
         result: list[Match] = []
+
         for row in rows:
-            for leg in row.legs:
-                if leg.get("record_type") == record_type and leg.get("record_id") == record_id:
-                    result.append(row.to_domain())
-                    break
+            if any(
+                leg.get("record_type") == record_type
+                and leg.get("record_id") == record_id
+                for leg in row.legs
+            ):
+                result.append(row.to_domain())
+
         return result
 
     def count(self) -> int:
@@ -476,12 +511,11 @@ class MatchRepository(_Repository):
 
 
 class BreakRepository(_Repository):
-    """Backs the exception queue."""
+    """Exception queue repository."""
 
     def upsert(self, brk: Break) -> None:
-        values = BreakRow.values(brk)
-        row = BreakRow(**values)
-        self.session.merge(row)
+        self.session.merge(BreakRow(**BreakRow.values(brk)))
+        self.session.flush()
 
     def get(self, break_id: str) -> Break | None:
         row = self.session.get(BreakRow, break_id)
@@ -497,37 +531,239 @@ class BreakRepository(_Repository):
         offset: int = 0,
     ) -> tuple[list[Break], int]:
         statement = select(BreakRow)
+
         if status is not None:
-            statement = statement.where(BreakRow.status == status)
+            statement = statement.where(
+                BreakRow.status == status
+            )
+
         if break_type is not None:
-            statement = statement.where(BreakRow.break_type == break_type)
+            statement = statement.where(
+                BreakRow.break_type == break_type
+            )
+
         if min_amount_minor is not None:
-            statement = statement.where(BreakRow.amount_at_risk_minor >= min_amount_minor)
+            statement = statement.where(
+                BreakRow.amount_at_risk_minor >= min_amount_minor
+            )
 
-        total = len(self.session.scalars(statement).all())
-        paged_statement = statement.offset(offset).limit(limit)
-        rows = self.session.scalars(paged_statement).all()
+        total = int(
+            self.session.scalar(
+                select(func.count()).select_from(
+                    statement.subquery()
+                )
+            )
+            or 0
+        )
 
-        return [r.to_domain() for r in rows], total
+        rows = self.session.scalars(
+            statement
+            .order_by(
+                BreakRow.amount_at_risk_minor.desc(),
+                BreakRow.break_id,
+            )
+            .offset(offset)
+            .limit(limit)
+        ).all()
+
+        return [row.to_domain() for row in rows], total
 
     def count(self) -> int:
         return self._count(BreakRow)
 
 
 class JournalRepository(_Repository):
-    """Entries are immutable once posted; corrections reverse."""
+    """Journal entries. Posted entries are immutable; corrections reverse."""
 
     def propose(self, entry: JournalEntry) -> None:
-        values = JournalEntryRow.values(entry)
-        row = JournalEntryRow(**values)
-        self.session.merge(row)
+        self.session.merge(
+            JournalEntryRow(**JournalEntryRow.values(entry))
+        )
+        self.session.flush()
+
+    def get(self, entry_id: str) -> JournalEntry | None:
+        row = self.session.get(JournalEntryRow, entry_id)
+        return row.to_domain() if row is not None else None
+
+    def all(self) -> list[JournalEntry]:
+        rows = self.session.scalars(
+            select(JournalEntryRow)
+            .order_by(JournalEntryRow.entry_id)
+        ).all()
+        return [row.to_domain() for row in rows]
+
+    def by_break(self, break_id: str) -> list[JournalEntry]:
+        rows = self.session.scalars(
+            select(JournalEntryRow)
+            .where(JournalEntryRow.break_id == break_id)
+        ).all()
+        return [row.to_domain() for row in rows]
+
+    def approve(
+        self,
+        entry_id: str,
+        approved_by: str,
+    ) -> JournalEntry | None:
+        entry = self.get(entry_id)
+
+        if entry is None:
+            return None
+
+        approved = entry.model_copy(
+            update={
+                "status": JournalEntryStatus.APPROVED,
+                "approved_by": approved_by,
+            }
+        )
+
+        self.session.merge(
+            JournalEntryRow(**JournalEntryRow.values(approved))
+        )
+        self.session.flush()
+
+        return approved
 
     def clearing_account_balance_minor(self) -> int:
-        statement = select(JournalEntryRow)
-        rows = self.session.scalars(statement).all()
+        rows = self.session.scalars(
+            select(JournalEntryRow)
+        ).all()
+
         net_clearing = 0
-        for r in rows:
-            for line in r.lines:
-                if line.get("account_code") == "1100":
-                    net_clearing += (line.get("debit_minor", 0) - line.get("credit_minor", 0))
+
+        for row in rows:
+            for line in row.lines:
+                if line.get("account_code") == "1200":
+                    net_clearing += (
+                        line.get("debit_minor", 0)
+                        - line.get("credit_minor", 0)
+                    )
+
         return net_clearing
+
+
+class ReconRunRepository(_Repository):
+    """Reconciliation run headers."""
+
+    def upsert(self, run: ReconRun) -> None:
+        row = ReconRunRow(
+            run_id=run.run_id,
+            started_at=run.started_at,
+            finished_at=run.finished_at,
+            status=run.status,
+            autonomy_level=run.autonomy_level,
+            counts=run.counts,
+        )
+        self.session.merge(row)
+        self.session.flush()
+
+    def get(self, run_id: str) -> ReconRun | None:
+        row = self.session.get(ReconRunRow, run_id)
+        return row.to_domain() if row is not None else None
+
+    def latest(self) -> ReconRun | None:
+        row = self.session.scalars(
+            select(ReconRunRow)
+            .order_by(ReconRunRow.started_at.desc())
+        ).first()
+        return row.to_domain() if row is not None else None
+
+    def all(self) -> list[ReconRun]:
+        rows = self.session.scalars(
+            select(ReconRunRow)
+            .order_by(ReconRunRow.started_at.desc())
+        ).all()
+        return [row.to_domain() for row in rows]
+
+
+class AuditRepository(_Repository):
+    """Tamper-evident audit trail repository."""
+
+    def append(self, event: AuditEvent) -> None:
+        self.session.merge(
+            AuditEventRow(
+                event_id=event.event_id,
+                sequence_number=self._next_sequence_number(),
+                timestamp=event.ts,
+                event_type=event.action.value,
+                actor=event.actor,
+                target_type=(
+                    event.subject_ids[0]
+                    if event.subject_ids
+                    else ""
+                ),
+                target_id=(
+                    event.subject_ids[0]
+                    if event.subject_ids
+                    else ""
+                ),
+                payload={
+                    "actor_id": event.actor_id,
+                    "subject_ids": list(event.subject_ids),
+                    "payload": dict(event.payload),
+                    "rationale": event.rationale,
+                    "confidence": event.confidence,
+                    "inputs_hash": event.inputs_hash,
+                },
+                prev_hash=event.prev_event_hash,
+                hash=event.event_hash,
+            )
+        )
+        self.session.flush()
+
+    def _next_sequence_number(self) -> int:
+        current = self.session.scalar(
+            select(func.max(AuditEventRow.sequence_number))
+        )
+        return int(current or 0) + 1
+
+    def list(
+        self,
+        *,
+        subject_id: str | None = None,
+        actor: DecisionActor | None = None,
+        action: AuditAction | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[AuditEventRow], int]:
+        statement = select(AuditEventRow)
+
+        if subject_id is not None:
+            statement = statement.where(
+                AuditEventRow.target_id == subject_id
+            )
+
+        if actor is not None:
+            statement = statement.where(
+                AuditEventRow.actor == actor
+            )
+
+        if action is not None:
+            statement = statement.where(
+                AuditEventRow.event_type == action.value
+            )
+
+        total = int(
+            self.session.scalar(
+                select(func.count()).select_from(
+                    statement.subquery()
+                )
+            )
+            or 0
+        )
+
+        rows = self.session.scalars(
+            statement
+            .order_by(AuditEventRow.sequence_number)
+            .offset(offset)
+            .limit(limit)
+        ).all()
+
+        return rows, total
+
+    def latest_hash(self) -> str:
+        row = self.session.scalars(
+            select(AuditEventRow)
+            .order_by(AuditEventRow.sequence_number.desc())
+        ).first()
+
+        return row.hash if row is not None else "0" * 64

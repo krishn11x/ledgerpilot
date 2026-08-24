@@ -1,32 +1,73 @@
-"""DECIDE node -- DETERMINISTIC CODE. No model call. PLACEHOLDER.
-
-The policy gate. Applies ``domain.policy.AutonomyPolicy`` to a *verified*
-proposal and routes to ACT or ESCALATE.
-
-Intentionally boring: a handful of comparisons against configured thresholds.
-Boring is the requirement -- this is the code that decides whether money moves
-without a human, so it must be readable in one sitting and auditable line by
-line.
-"""
+"""DECIDE node -- deterministic policy gate."""
 
 from __future__ import annotations
 
 from ledgerpilot.agent.state import AgentState
+from ledgerpilot.config import settings
+from ledgerpilot.domain.enums import BreakType
+from ledgerpilot.domain.policy import AutonomyPolicy
 
 
 async def decide(state: AgentState) -> AgentState:
-    """TODO(phase-5): set decision + decision_reason from policy.
+    """Apply the configured autonomy policy to a verified proposal."""
 
-    Gate conditions, all required for autonomous resolution:
-      * state["verified"] is True
-      * autonomy_level >= AUTO_CLEAR
-      * confidence >= auto_approve_min_confidence
-      * amount_at_risk < materiality_threshold
-      * break type is not inherently human-only (duplicates, chargebacks)
-    """
-    raise NotImplementedError
+    confidence = float(state.get("confidence", 0.0))
+
+    ctx = state.get("break_context", {})
+
+    amount = int(
+        ctx.get(
+            "amount_at_risk_minor",
+            state.get("materiality_minor", 0),
+        )
+    )
+
+    raw_type = state.get(
+        "classified_type",
+        ctx.get("break_type"),
+    )
+
+    break_type = (
+    raw_type
+    if isinstance(raw_type, BreakType)
+    else BreakType(raw_type)
+)
+
+    policy = AutonomyPolicy(
+        level=int(settings.autonomy_level),
+        materiality_threshold_minor=int(
+            settings.materiality_threshold_minor
+        ),
+        min_confidence=float(
+            settings.auto_approve_min_confidence
+        ),
+    )
+
+    if (
+        state.get("verified")
+        and policy.may_auto_resolve(
+            break_type=break_type,
+            amount_minor=amount,
+            confidence=confidence,
+        )
+    ):
+        state["decision"] = "auto_resolve"
+        state["decision_reason"] = (
+            "policy permits autonomous resolution"
+        )
+    else:
+        state["decision"] = "escalate"
+        state["decision_reason"] = (
+            "policy requires human review"
+        )
+
+    return state
 
 
 def decision_route(state: AgentState) -> str:
-    """TODO(phase-5): conditional edge -> "act" | "escalate"."""
-    raise NotImplementedError
+    """Route the policy decision."""
+
+    if state.get("decision") == "auto_resolve":
+        return "act"
+
+    return "escalate"

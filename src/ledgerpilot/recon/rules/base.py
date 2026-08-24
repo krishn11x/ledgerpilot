@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from ledgerpilot.domain.enums import MatchMethod
-from ledgerpilot.recon.engine import PassResult, ReconContext
+from ledgerpilot.recon.types import PassResult, ReconContext
 
 
 @runtime_checkable

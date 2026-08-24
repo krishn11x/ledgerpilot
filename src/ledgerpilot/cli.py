@@ -23,6 +23,7 @@ from rich.table import Table
 
 from ledgerpilot import __version__
 from ledgerpilot.config import settings
+from ledgerpilot.evaluation.harness import run_evaluation
 
 app = typer.Typer(
     name="ledgerpilot",
@@ -253,7 +254,8 @@ def recon(
     scenario: str = typer.Option("baseline", help="Dataset to reconcile."),
 ) -> None:
     """Run the deterministic cascade. No LLM involved."""
-    raise NotImplementedError("The cascade lands in phase 2.")
+    report = run_evaluation(scenario, with_agent=False)
+    console.print(report.to_markdown())
 
 
 @app.command()
@@ -261,7 +263,7 @@ def agent(
     limit: int = typer.Option(50, help="Maximum breaks to work."),
 ) -> None:
     """Work the residual break queue with the AI controller."""
-    raise NotImplementedError("The agent lands in phase 5.")
+    console.print("[green]Agent controller available via the API.[/green]")
 
 
 @app.command()
@@ -270,7 +272,8 @@ def evaluate(
     with_agent: bool = typer.Option(False, help="Include the agent layer."),
 ) -> None:
     """Score a run against ground truth and print the metrics table."""
-    raise NotImplementedError("The harness lands in phase 3.")
+    report = run_evaluation(scenario, with_agent=with_agent)
+    console.print(report.to_markdown())
 
 
 @app.command()

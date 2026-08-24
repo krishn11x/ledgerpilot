@@ -20,6 +20,7 @@ from ledgerpilot.api.errors import register_exception_handlers
 from ledgerpilot.api.routers import audit, breaks, health, ledger, matches, metrics, runs, scenarios
 from ledgerpilot.config import settings
 from ledgerpilot.logging import configure_logging, get_logger
+from ledgerpilot.store.db import create_all
 
 log = get_logger(__name__)
 
@@ -47,7 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         agent_available=settings.agent_available,
         autonomy_level=int(settings.autonomy_level),
     )
-    # TODO(phase-1): verify DB connectivity and warn on pending migrations
+    create_all()
     yield
     log.info("api.shutdown")
 

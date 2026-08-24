@@ -15,6 +15,7 @@ influence.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -42,21 +43,33 @@ class Budget:
 
     def consume(self, *, tokens: int = 0, steps: int = 0) -> None:
         """TODO: increment and raise BudgetExhaustedError past either limit."""
-        raise NotImplementedError
+        self.tokens_used += tokens
+        self.steps_used += steps
+        if self.tokens_used > self.max_tokens or self.steps_used > self.max_steps:
+            raise BudgetExhaustedError("budget exhausted")
 
     @property
     def exhausted(self) -> bool:
-        raise NotImplementedError
+        return self.tokens_used >= self.max_tokens or self.steps_used >= self.max_steps
 
 
 def validate_structured_output(raw: str, schema: type[Any]) -> Any:
     """TODO: parse and validate model output; raise SchemaValidationError."""
-    raise NotImplementedError
+    try:
+        payload = json.loads(raw)
+        if hasattr(schema, "model_validate"):
+            return schema.model_validate(payload)
+        return schema(**payload)
+    except Exception as exc:
+        raise SchemaValidationError(str(exc)) from exc
 
 
 def assert_grounded(proposal: dict[str, Any], known_ids: set[str]) -> None:
     """TODO: every referenced record id must exist. Catches hallucinated ids."""
-    raise NotImplementedError
+    refs = proposal.get("matched_record_ids", []) or proposal.get("subject_ids", [])
+    missing = [rid for rid in refs if rid not in known_ids]
+    if missing:
+        raise UngroundedClaimError(f"unknown record ids: {missing}")
 
 
 def redact_for_prompt(record: dict[str, Any]) -> dict[str, Any]:
@@ -66,4 +79,9 @@ def redact_for_prompt(record: dict[str, Any]) -> dict[str, Any]:
     dates and references are. Minimising what leaves the process is cheaper
     than auditing what happens to it afterwards.
     """
-    raise NotImplementedError
+    redacted = dict(record)
+    for key in list(redacted):
+        lower = key.lower()
+        if any(token in lower for token in ("email", "name", "customer", "phone")):
+            redacted[key] = "[redacted]"
+    return redacted

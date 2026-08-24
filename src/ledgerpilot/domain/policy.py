@@ -134,11 +134,21 @@ class AutonomyPolicy:
         below materiality, and a break type that is not inherently
         human-only (duplicates and chargebacks always escalate).
         """
-        raise NotImplementedError
+        if self.level < 2:
+            return False
+        if confidence < self.min_confidence:
+            return False
+        if amount_minor >= self.materiality_threshold_minor:
+            return False
+        return break_type not in (BreakType.DUPLICATE_PAYMENT, BreakType.CHARGEBACK)
 
     def may_auto_post_journal(self, *, amount_minor: int, confidence: float) -> bool:
         """TODO: True only at level >= AUTO_POST and within limits."""
-        raise NotImplementedError
+        return (
+            self.level >= 3
+            and confidence >= self.min_confidence
+            and amount_minor < self.materiality_threshold_minor
+        )
 
 
 def severity_for(break_type: BreakType, amount_minor: int, materiality_minor: int) -> BreakSeverity:
@@ -147,4 +157,21 @@ def severity_for(break_type: BreakType, amount_minor: int, materiality_minor: in
     Timing differences are INFO regardless of size; suspected duplicates are
     CRITICAL regardless of size.
     """
-    raise NotImplementedError
+    if break_type == BreakType.TIMING_DIFFERENCE:
+        return BreakSeverity.INFO
+    if break_type in (BreakType.DUPLICATE_PAYMENT, BreakType.CHARGEBACK):
+        return BreakSeverity.CRITICAL
+    if amount_minor >= materiality_minor:
+        return BreakSeverity.CRITICAL
+    if break_type in (
+        BreakType.AMOUNT_MISMATCH,
+        BreakType.PAYOUT_MISMATCH,
+        BreakType.FEE_VARIANCE,
+        BreakType.SHORT_PAYMENT,
+        BreakType.MISSING_IN_GATEWAY,
+        BreakType.ORPHAN_PAYMENT,
+    ):
+        return BreakSeverity.MEDIUM
+    if break_type in (BreakType.UNSETTLED, BreakType.UNIDENTIFIED_CREDIT, BreakType.FX_VARIANCE):
+        return BreakSeverity.LOW
+    return BreakSeverity.LOW

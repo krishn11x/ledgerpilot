@@ -15,7 +15,6 @@ from datetime import UTC, datetime
 
 from ledgerpilot.domain.enums import MatchMethod, MatchStatus
 from ledgerpilot.domain.models import Match, MatchLeg
-from ledgerpilot.recon.engine import PassResult, ReconContext
 from ledgerpilot.recon.scoring import (
     ScoredCandidate,
     combined_score,
@@ -24,6 +23,7 @@ from ledgerpilot.recon.scoring import (
     score_date,
     score_narration,
 )
+from ledgerpilot.recon.types import PassResult, ReconContext
 
 
 class FuzzyScoreRule:

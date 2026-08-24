@@ -1,13 +1,4 @@
-"""ESCALATE node -- DETERMINISTIC CODE. No model call. PLACEHOLDER.
-
-Hands the break to a human via LangGraph ``interrupt()``. The graph state is
-checkpointed, the break moves to PENDING_APPROVAL, and the run continues with
-other breaks.
-
-The escalation is not a dead end -- it is a suspended computation. When someone
-approves via ``POST /breaks/{id}/decision``, the graph resumes from this exact
-point with the agent's full reasoning still attached, and proceeds to ACT.
-"""
+"""ESCALATE node -- deterministic human-review handoff."""
 
 from __future__ import annotations
 
@@ -15,12 +6,22 @@ from ledgerpilot.agent.state import AgentState
 
 
 async def escalate(state: AgentState) -> AgentState:
-    """TODO(phase-5): checkpoint and interrupt.
+    """Mark the break for human review."""
 
-    Steps:
-      1. persist the agent's findings and narrative onto the Break
-      2. set Break.status = PENDING_APPROVAL, severity from policy
-      3. append an audit event recording *why* it escalated
-      4. call interrupt() so the graph suspends resumably
-    """
-    raise NotImplementedError
+    state["decision"] = "escalate"
+    state["decision_reason"] = "human review required"
+
+    state["escalation"] = {
+        "status": "pending_approval",
+        "break_id": state.get("break_id"),
+        "run_id": state.get("run_id"),
+        "reason": state.get(
+            "decision_reason",
+            "verification or policy failure",
+        ),
+        "verify_failures": list(
+            state.get("verify_failures", [])
+        ),
+    }
+
+    return state

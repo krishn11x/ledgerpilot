@@ -13,6 +13,7 @@ made six weeks ago can be traced to the exact prompt that produced it.
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
 
 PROMPTS_DIR = Path(__file__).parent
@@ -23,4 +24,12 @@ PROMPT_VERSION = "v0.1.0"
 
 def load(name: str) -> str:
     """TODO(phase-5): read ``{name}.md`` from this directory, cached."""
-    raise NotImplementedError
+    return _load(name)
+
+
+@cache
+def _load(name: str) -> str:
+    path = PROMPTS_DIR / f"{name}.md"
+    if not path.exists():
+        raise FileNotFoundError(f"prompt not found: {path}")
+    return path.read_text(encoding="utf-8")

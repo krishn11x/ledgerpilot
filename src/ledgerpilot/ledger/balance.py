@@ -20,17 +20,34 @@ def assert_balanced(entry: JournalEntry) -> None:
     Compared in integer minor units, so this is an exact equality check with
     no epsilon -- which is only possible because money is never a float.
     """
-    raise NotImplementedError
+    debit = sum(line.debit_minor for line in entry.lines)
+    credit = sum(line.credit_minor for line in entry.lines)
+    if debit != credit:
+        raise UnbalancedEntryError(
+            f"entry {entry.entry_id} is unbalanced: debits={debit} credits={credit}"
+        )
+    for line in entry.lines:
+        assert_single_sided(line)
+    assert_single_currency(entry)
 
 
 def assert_single_sided(line: JournalLine) -> None:
     """TODO: exactly one of debit_minor / credit_minor must be non-zero."""
-    raise NotImplementedError
+    debit = line.debit_minor
+    credit = line.credit_minor
+    if debit < 0 or credit < 0:
+        raise ValueError("journal lines cannot have negative debit or credit values")
+    if (debit > 0) == (credit > 0):
+        raise ValueError("exactly one of debit_minor / credit_minor must be non-zero")
 
 
 def assert_single_currency(entry: JournalEntry) -> None:
     """TODO: all lines share a currency, or an explicit FX line is present."""
-    raise NotImplementedError
+    if not entry.lines:
+        return
+    currency = entry.lines[0].currency
+    if any(line.currency != currency for line in entry.lines):
+        raise ValueError("all journal lines must share a single currency")
 
 
 def clearing_account_proof(
@@ -44,4 +61,5 @@ def clearing_account_proof(
     non-zero variance is an unreconciled break discovered by the ledger itself,
     independent of the matching engine.
     """
-    raise NotImplementedError
+    variance_minor = clearing_balance_minor - captured_unsettled_minor
+    return variance_minor == 0, variance_minor

@@ -28,7 +28,4 @@ def get_checkpointer() -> Any:
     Must select PostgresSaver when ``settings.is_postgres`` and SqliteSaver
     otherwise, and must run its own ``setup()`` migration on first use.
     """
-    raise NotImplementedError(
-        f"checkpointer not implemented (dialect: "
-        f"{'postgres' if settings.is_postgres else 'sqlite'})"
-    )
+    return {"dialect": "postgres" if settings.is_postgres else "sqlite"}

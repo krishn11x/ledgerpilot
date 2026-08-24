@@ -42,9 +42,10 @@ def test_scenarios_listing_is_implemented(client: Any) -> None:
     assert "baseline" in names
 
 
-def test_unimplemented_endpoints_return_501(client: Any) -> None:
-    """Scaffolded endpoints must say so, not return a misleading empty success."""
-    for path in ("/breaks", "/matches/abc", "/audit", "/metrics", "/ledger/entries"):
-        r = client.get(path)
-        assert r.status_code == 501, f"{path} returned {r.status_code}"
-        assert r.json()["error"]["code"] == "not_implemented"
+def test_feature_endpoints_are_implemented(client: Any) -> None:
+    """Core API surfaces respond with real payloads, not scaffold errors."""
+    assert client.get("/breaks").status_code == 200
+    assert client.get("/matches/abc").status_code == 404
+    assert client.get("/audit").status_code == 200
+    assert client.get("/metrics").status_code == 200
+    assert client.get("/ledger/entries").status_code == 200

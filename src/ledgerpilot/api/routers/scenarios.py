@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
 
 from ledgerpilot.api.schemas import GenerateScenarioRequest
-from ledgerpilot.synth.scenarios import SCENARIOS
+from ledgerpilot.synth.breaks import BreakInjector
+from ledgerpilot.synth.generator import SyntheticGenerator, write_dataset
+from ledgerpilot.synth.scenarios import SCENARIOS, get_scenario
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
@@ -33,4 +36,17 @@ def list_scenarios() -> dict[str, Any]:
 @router.post("/generate", status_code=202, summary="Generate a synthetic dataset")
 def generate(body: GenerateScenarioRequest) -> dict[str, Any]:
     """TODO(phase-6): materialise CSVs plus the ground-truth answer key."""
-    raise NotImplementedError
+    scenario = get_scenario(body.scenario)
+    generator = SyntheticGenerator(
+        seed=body.seed if body.seed is not None else scenario.seed,
+        period_days=scenario.period_days,
+        scenario=scenario.name,
+    )
+    dataset = generator.generate(order_count=body.order_count or scenario.order_count)
+    injector = BreakInjector(seed=body.seed if body.seed is not None else scenario.seed)
+    dataset, labels = injector.inject(dataset, scenario.mix)
+    written = write_dataset(dataset, Path("data") / "synthetic" / scenario.name)
+    return {
+        "paths": {key: str(value) for key, value in written.items()},
+        "ground_truth": len(labels),
+    }

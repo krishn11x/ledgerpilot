@@ -12,6 +12,7 @@ from pathlib import Path
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from ledgerpilot.config import settings
 from ledgerpilot.logging import get_logger
@@ -31,7 +32,9 @@ def get_engine() -> Engine:
 
     if url.startswith("sqlite"):
         # Make sure ./data exists before SQLite tries to create the file.
-        if ":///" in url and ":memory:" not in url:
+        if ":memory:" in url:
+            kwargs["poolclass"] = StaticPool
+        elif ":///" in url:
             db_path = Path(url.split(":///", 1)[1])
             db_path.parent.mkdir(parents=True, exist_ok=True)
         kwargs["connect_args"] = {"check_same_thread": False}

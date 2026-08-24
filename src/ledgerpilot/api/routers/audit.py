@@ -6,6 +6,9 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Query
 
+from ledgerpilot.audit.events import query
+from ledgerpilot.audit.hashchain import verify_chain as verify_audit_chain
+
 router = APIRouter(prefix="/audit", tags=["audit"])
 
 
@@ -16,7 +19,13 @@ def list_events(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> dict[str, Any]:
     """TODO(phase-7): paged, filterable, read-only. Never writable over HTTP."""
-    raise NotImplementedError
+    events, total = query(subject_id=subject_id, limit=limit, offset=offset)
+    return {
+        "items": [event.__dict__ for event in events],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/verify", summary="Verify chain integrity")
@@ -26,4 +35,6 @@ def verify_chain() -> dict[str, Any]:
     Rendered as a green/red badge in the UI so an auditor can confirm the log
     has not been edited without reading every entry.
     """
-    raise NotImplementedError
+    events, _ = query(limit=10_000)
+    intact, first_broken_index = verify_audit_chain(events)
+    return {"intact": intact, "first_broken_index": first_broken_index}

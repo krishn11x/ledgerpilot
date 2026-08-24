@@ -11,8 +11,13 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Query
 
+from ledgerpilot.agent.graph import resolve_break
+from ledgerpilot.api.errors import ConflictError, NotFoundError
 from ledgerpilot.api.schemas import BreakDecisionRequest
-from ledgerpilot.domain.enums import BreakStatus, BreakType
+from ledgerpilot.audit.trace import build_for_break
+from ledgerpilot.domain.enums import BreakStatus, BreakType, DecisionAction
+from ledgerpilot.store.db import session_scope
+from ledgerpilot.store.repositories import BreakRepository
 
 router = APIRouter(prefix="/breaks", tags=["breaks"])
 
@@ -26,7 +31,20 @@ def list_breaks(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> dict[str, Any]:
     """TODO(phase-7): paged, filtered queue ordered by severity then amount."""
-    raise NotImplementedError
+    with session_scope() as session:
+        items, total = BreakRepository(session).query(
+            status=status,
+            break_type=break_type,
+            min_amount_minor=min_amount_minor,
+            limit=limit,
+            offset=offset,
+        )
+    return {
+        "items": [item.model_dump() for item in items],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/{break_id}", summary="Break detail with full evidence chain")
@@ -36,7 +54,12 @@ def get_break(break_id: str) -> dict[str, Any]:
     This response is what a human reads before approving, so it must include
     contradicting evidence alongside supporting evidence.
     """
-    raise NotImplementedError
+    with session_scope() as session:
+        brk = BreakRepository(session).get(break_id)
+    if brk is None:
+        raise NotFoundError(f"break {break_id!r} not found")
+    chain = build_for_break(break_id)
+    return {"break": brk.model_dump(), "evidence": chain.to_markdown()}
 
 
 @router.post("/{break_id}/decision", summary="Approve, reject or reassign")
@@ -46,10 +69,34 @@ def decide_break(break_id: str, body: BreakDecisionRequest) -> dict[str, Any]:
     Must be idempotent and must reject a second decision on an already-decided
     break with 409 -- two reviewers clicking Approve should not post twice.
     """
-    raise NotImplementedError
+    with session_scope() as session:
+        repo = BreakRepository(session)
+        brk = repo.get(break_id)
+        if brk is None:
+            raise NotFoundError(f"break {break_id!r} not found")
+        if brk.status not in (
+            BreakStatus.OPEN,
+            BreakStatus.INVESTIGATING,
+            BreakStatus.PENDING_APPROVAL,
+        ):
+            raise ConflictError(f"break {break_id!r} already decided")
+        if body.action == DecisionAction.APPROVE:
+            updated = brk.model_copy(
+                update={"status": BreakStatus.RESOLVED_MANUAL, "assignee": body.assignee}
+            )
+        elif body.action == DecisionAction.REJECT:
+            updated = brk.model_copy(
+                update={"status": BreakStatus.REJECTED, "assignee": body.assignee}
+            )
+        else:
+            updated = brk.model_copy(
+                update={"status": BreakStatus.ESCALATED, "assignee": body.assignee}
+            )
+        repo.upsert(updated)
+    return {"break_id": break_id, "status": updated.status, "note": body.note}
 
 
 @router.post("/{break_id}/investigate", status_code=202, summary="Run the agent on one break")
 def investigate_break(break_id: str) -> dict[str, Any]:
     """TODO(phase-7): manually trigger the agent. Used for the live demo."""
-    raise NotImplementedError
+    return __import__("asyncio").run(resolve_break(break_id, run_id=f"RUN-{break_id}"))

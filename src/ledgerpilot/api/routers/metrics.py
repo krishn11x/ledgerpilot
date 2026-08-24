@@ -6,6 +6,8 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Query
 
+from ledgerpilot.evaluation.harness import run_evaluation
+
 router = APIRouter(prefix="/metrics", tags=["metrics"])
 
 
@@ -19,10 +21,16 @@ def get_metrics(
     Reports engine-only and engine-plus-agent separately, so the contribution
     of each layer is legible rather than asserted.
     """
-    raise NotImplementedError
+    report = run_evaluation(scenario, with_agent=with_agent)
+    return report.__dict__
 
 
 @router.get("/dashboard", summary="KPI summary for the dashboard")
 def dashboard() -> dict[str, Any]:
     """TODO(phase-8): match rate, value unreconciled, break mix, aging."""
-    raise NotImplementedError
+    report = run_evaluation("baseline", with_agent=False)
+    return {
+        "auto_match_rate": report.auto_match_rate,
+        "false_positive_match_rate": report.false_positive_match_rate,
+        "value_unreconciled_minor": report.value_unreconciled_minor,
+    }

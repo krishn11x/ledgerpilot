@@ -36,8 +36,8 @@ from ledgerpilot.domain.enums import BreakType, MatchMethod, MatchStatus
 from ledgerpilot.domain.models import Break, Match, MatchLeg
 from ledgerpilot.ingest.normalize import extract_references
 from ledgerpilot.recon.classify import build_break
-from ledgerpilot.recon.engine import PassResult, ReconContext
 from ledgerpilot.recon.keys import match_id_for
+from ledgerpilot.recon.types import PassResult, ReconContext
 
 
 class AggregatePayoutRule:

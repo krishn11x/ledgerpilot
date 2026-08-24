@@ -11,13 +11,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from ledgerpilot.domain.models import (
-    BankTxn,
     Break,
-    GatewayTxn,
     Match,
     MatchLeg,
-    Order,
-    PayoutBatch,
     ReconRun,
 )
 from ledgerpilot.recon.classify import (
@@ -31,32 +27,9 @@ from ledgerpilot.recon.rules.base import MatchRule
 from ledgerpilot.recon.rules.exact import ExactReferenceRule
 from ledgerpilot.recon.rules.fuzzy import FuzzyScoreRule
 from ledgerpilot.recon.rules.tolerance import ToleranceRule
+from ledgerpilot.recon.types import PassResult, ReconContext
 
-
-@dataclass(slots=True)
-class ReconContext:
-    """Everything a pass may read. Immutable from a pass's point of view."""
-
-    run_id: str
-    orders: list[Order] = field(default_factory=list)
-    gateway_txns: list[GatewayTxn] = field(default_factory=list)
-    payouts: list[PayoutBatch] = field(default_factory=list)
-    bank_txns: list[BankTxn] = field(default_factory=list)
-    date_window_days: int = 3
-    amount_tolerance_minor: int = 100
-    min_fuzzy_score: float = 0.82
-    min_fuzzy_margin: float = 0.05
-
-
-@dataclass(slots=True)
-class PassResult:
-    """What one cascade pass produced."""
-
-    pass_name: str
-    matches: list[Match] = field(default_factory=list)
-    breaks: list[Break] = field(default_factory=list)
-    consumed_ids: set[str] = field(default_factory=set)
-    duration_ms: int = 0
+__all__ = ["PassResult", "ReconContext", "ReconEngine", "ReconResult"]
 
 
 @dataclass(slots=True)
@@ -66,6 +39,8 @@ class ReconResult:
     run: ReconRun
     passes: list[PassResult] = field(default_factory=list)
     residual_ids: set[str] = field(default_factory=set)
+    matches: list[Match] = field(default_factory=list)
+    breaks: list[Break] = field(default_factory=list)
 
     @property
     def auto_match_rate(self) -> float:
@@ -132,6 +107,8 @@ class ReconEngine:
             run=recon_run,
             passes=pass_results,
             residual_ids=unmatched,
+            matches=all_matches,
+            breaks=all_breaks,
         )
 
     def run(self, *, run_id: str) -> ReconResult:

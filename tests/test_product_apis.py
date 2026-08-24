@@ -9,7 +9,14 @@ from ledgerpilot.api.main import create_app
 from ledgerpilot.domain.enums import MatchMethod, MatchStatus
 from ledgerpilot.domain.models import JournalEntry, JournalLine, Match, MatchLeg
 from ledgerpilot.store.db import create_all, session_scope
-from ledgerpilot.store.repositories import JournalRepository, MatchRepository
+from ledgerpilot.store.repositories import (
+    BankRepository,
+    GatewayRepository,
+    JournalRepository,
+    MatchRepository,
+    OrderRepository,
+    PayoutRepository,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -175,6 +182,47 @@ def test_upload_rejects_invalid_extension(client: object) -> None:
     payload = resp.json()
     assert "CSV or XLSX" in payload["error"]["message"]
     assert "CSV or XLSX" in str(payload["error"]["detail"] or "")
+
+
+def test_uploaded_runs_are_isolated(client: object) -> None:
+    def files(suffix: str) -> dict[str, tuple[str, bytes]]:
+        return {
+            "orders": ("orders.csv", f"order_id,customer_id,gross_minor,currency,placed_at,status\nORDER-{suffix},C1,1000,INR,2024-01-01T00:00:00Z,paid\n".encode()),
+            "gateway_txns": ("gateway_txns.csv", f"txn_id,order_ref,gross_minor,fee_minor,tax_minor,net_minor,currency,status,payout_id,captured_at\nTXN-{suffix},ORDER-{suffix},1000,0,0,1000,INR,captured,,2024-01-01T00:00:00Z\n".encode()),
+            "payouts": ("payouts.csv", f"payout_id,expected_net_minor,txn_count,currency,settled_on,utr\nPAYOUT-{suffix},1000,1,INR,2024-01-01,UTR-{suffix}\n".encode()),
+            "bank_txns": ("bank_txns.csv", f"bank_txn_id,value_date,amount,direction,currency,narration,utr\nBANK-{suffix},2024-01-01,1000,credit,INR,Gateway settlement,UTR-{suffix}\n".encode()),
+        }
+
+    first = client.post("/upload", files=files("A"))
+    second = client.post("/upload", files=files("B"))
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+
+    first_run = first.json()["run_id"]
+    second_run = second.json()["run_id"]
+    assert first_run != second_run
+    assert first.json()["persisted"]["orders"] == 1
+    assert second.json()["persisted"]["orders"] == 1
+
+    first_matches = client.get(f"/matches?run_id={first_run}").json()
+    second_matches = client.get(f"/matches?run_id={second_run}").json()
+    assert first_matches["total"] == first.json()["counts"]["matches"]
+    assert second_matches["total"] == second.json()["counts"]["matches"]
+
+    first_breaks = client.get(f"/breaks?run_id={first_run}").json()
+    second_breaks = client.get(f"/breaks?run_id={second_run}").json()
+    assert first_breaks["total"] == first.json()["counts"]["breaks"]
+    assert second_breaks["total"] == second.json()["counts"]["breaks"]
+
+    with session_scope() as session:
+        assert [item.order_id for item in OrderRepository(session).for_run(first_run)] == ["ORDER-A"]
+        assert [item.order_id for item in OrderRepository(session).for_run(second_run)] == ["ORDER-B"]
+        assert [item.txn_id for item in GatewayRepository(session).for_run(first_run)] == ["TXN-A"]
+        assert [item.txn_id for item in GatewayRepository(session).for_run(second_run)] == ["TXN-B"]
+        assert [item.payout_id for item in PayoutRepository(session).for_run(first_run)] == ["PAYOUT-A"]
+        assert [item.payout_id for item in PayoutRepository(session).for_run(second_run)] == ["PAYOUT-B"]
+        assert [item.bank_txn_id for item in BankRepository(session).for_run(first_run)] == ["BANK-A"]
+        assert [item.bank_txn_id for item in BankRepository(session).for_run(second_run)] == ["BANK-B"]
 
 
 def test_dashboard_metrics(client: object) -> None:

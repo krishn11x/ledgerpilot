@@ -37,6 +37,17 @@ def start_run(body: StartRunRequest) -> dict[str, Any]:
         bank_txns=load_bank_txns(Path(paths["bank_txns"])),
     )
     result = ReconEngine().run_context(ctx)
+    result.run = result.run.model_copy(
+        update={
+            "counts": {
+                **result.run.counts,
+                "orders": len(ctx.orders),
+                "gateway_txns": len(ctx.gateway_txns),
+                "payouts": len(ctx.payouts),
+                "bank_txns": len(ctx.bank_txns),
+            }
+        }
+    )
     with session_scope() as session:
         ReconRunRepository(session).upsert(result.run)
         match_repo = MatchRepository(session)

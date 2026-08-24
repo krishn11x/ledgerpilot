@@ -18,7 +18,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from ledgerpilot import __version__
 from ledgerpilot.api.deps import require_auth
 from ledgerpilot.api.errors import register_exception_handlers
-from ledgerpilot.api.routers import audit, breaks, health, ledger, matches, metrics, runs, scenarios, upload
+from ledgerpilot.api.routers import (
+    audit,
+    breaks,
+    health,
+    ledger,
+    matches,
+    metrics,
+    runs,
+    scenarios,
+    upload,
+)
 from ledgerpilot.config import settings
 from ledgerpilot.logging import configure_logging, get_logger
 from ledgerpilot.store.db import create_all

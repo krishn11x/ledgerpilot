@@ -166,6 +166,12 @@ class OrderRepository(_Repository):
             "order_id",
         )
 
+    def for_run(self, run_id: str) -> list[Order]:
+        rows = self.session.scalars(
+            select(OrderRow).where(OrderRow.run_id == run_id).order_by(OrderRow.order_id)
+        ).all()
+        return [row.to_domain() for row in rows]
+
     def get(self, order_id: str) -> Order | None:
         row = self.session.get(OrderRow, order_id)
         return row.to_domain() if row is not None else None
@@ -198,6 +204,14 @@ class GatewayRepository(_Repository):
             [GatewayTxnRow.values(txn) for txn in txns],
             "txn_id",
         )
+
+    def for_run(self, run_id: str) -> list[GatewayTxn]:
+        rows = self.session.scalars(
+            select(GatewayTxnRow)
+            .where(GatewayTxnRow.run_id == run_id)
+            .order_by(GatewayTxnRow.txn_id)
+        ).all()
+        return [row.to_domain() for row in rows]
 
     def get(self, txn_id: str) -> GatewayTxn | None:
         row = self.session.get(GatewayTxnRow, txn_id)
@@ -251,6 +265,14 @@ class PayoutRepository(_Repository):
             "payout_id",
         )
 
+    def for_run(self, run_id: str) -> list[PayoutBatch]:
+        rows = self.session.scalars(
+            select(PayoutBatchRow)
+            .where(PayoutBatchRow.run_id == run_id)
+            .order_by(PayoutBatchRow.payout_id)
+        ).all()
+        return [row.to_domain() for row in rows]
+
     def get(self, payout_id: str) -> PayoutBatch | None:
         row = self.session.get(PayoutBatchRow, payout_id)
         return row.to_domain() if row is not None else None
@@ -283,6 +305,12 @@ class BankRepository(_Repository):
             [BankTxnRow.values(txn) for txn in txns],
             "bank_txn_id",
         )
+
+    def for_run(self, run_id: str) -> list[BankTxn]:
+        rows = self.session.scalars(
+            select(BankTxnRow).where(BankTxnRow.run_id == run_id).order_by(BankTxnRow.bank_txn_id)
+        ).all()
+        return [row.to_domain() for row in rows]
 
     def get(self, bank_txn_id: str) -> BankTxn | None:
         row = self.session.get(BankTxnRow, bank_txn_id)
@@ -509,6 +537,12 @@ class MatchRepository(_Repository):
     def count(self) -> int:
         return self._count(MatchRow)
 
+    def for_run(self, run_id: str) -> list[Match]:
+        rows = self.session.scalars(
+            select(MatchRow).where(MatchRow.run_id == run_id).order_by(MatchRow.match_id)
+        ).all()
+        return [row.to_domain() for row in rows]
+
 
 class BreakRepository(_Repository):
     """Exception queue repository."""
@@ -524,6 +558,7 @@ class BreakRepository(_Repository):
     def query(
         self,
         *,
+        run_id: str | None = None,
         status: BreakStatus | None = None,
         break_type: BreakType | None = None,
         min_amount_minor: int | None = None,
@@ -531,6 +566,9 @@ class BreakRepository(_Repository):
         offset: int = 0,
     ) -> tuple[list[Break], int]:
         statement = select(BreakRow)
+
+        if run_id is not None:
+            statement = statement.where(BreakRow.run_id == run_id)
 
         if status is not None:
             statement = statement.where(
@@ -570,6 +608,10 @@ class BreakRepository(_Repository):
 
     def count(self) -> int:
         return self._count(BreakRow)
+
+    def for_run(self, run_id: str) -> list[Break]:
+        items, _ = self.query(run_id=run_id, limit=500, offset=0)
+        return items
 
 
 class JournalRepository(_Repository):

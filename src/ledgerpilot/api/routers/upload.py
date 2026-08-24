@@ -6,7 +6,7 @@ import csv
 import io
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import pandas as pd
@@ -14,11 +14,6 @@ from fastapi import APIRouter, File, UploadFile
 
 from ledgerpilot.api.errors import LedgerPilotError
 from ledgerpilot.ingest.loaders import (
-    BANK_COLUMNS,
-    GATEWAY_COLUMNS,
-    ORDER_COLUMNS,
-    PAYOUT_COLUMNS,
-    read_rows,
     to_bank_txn,
     to_gateway_txn,
     to_order,
@@ -90,7 +85,7 @@ def _read_xlsx_rows(data: bytes) -> list[dict[str, Any]]:
     if frame.empty:
         return []
     normalized = frame.where(pd.notna(frame), None)
-    return normalized.to_dict(orient="records")
+    return cast(list[dict[str, Any]], normalized.to_dict(orient="records"))
 
 
 async def _read_rows_for_upload(file: UploadFile) -> list[dict[str, Any]]:
@@ -124,6 +119,7 @@ async def upload_dataset(
     if missing:
         raise UploadValidationError(f"Missing required file(s): {', '.join(missing)}")
 
+    run_id = f"RUN-UPLOAD-{uuid4().hex[:12]}"
     ingest_run_id = f"ING-{uuid4().hex[:12]}"
     counts: dict[str, int] = {
         "orders": 0,
@@ -168,20 +164,32 @@ async def upload_dataset(
             try:
                 if key == "orders":
                     accepted, report = validate_orders(rows)
-                    orders = [to_order(row) for row in accepted]
-                    counts["orders"] = order_repo.bulk_upsert(orders)
+                    order_records = [
+                        to_order(row).model_copy(update={"run_id": run_id})
+                        for row in accepted
+                    ]
+                    counts["orders"] = order_repo.bulk_upsert(order_records)
                 elif key == "gateway_txns":
                     accepted, report = validate_gateway_txns(rows)
-                    txns = [to_gateway_txn(row) for row in accepted]
-                    counts["gateway_txns"] = gateway_repo.bulk_upsert(txns)
+                    gateway_records = [
+                        to_gateway_txn(row).model_copy(update={"run_id": run_id})
+                        for row in accepted
+                    ]
+                    counts["gateway_txns"] = gateway_repo.bulk_upsert(gateway_records)
                 elif key == "payouts":
                     accepted, report = validate_payouts(rows)
-                    payouts = [to_payout(row) for row in accepted]
-                    counts["payouts"] = payout_repo.bulk_upsert(payouts)
+                    payout_records = [
+                        to_payout(row).model_copy(update={"run_id": run_id})
+                        for row in accepted
+                    ]
+                    counts["payouts"] = payout_repo.bulk_upsert(payout_records)
                 else:
                     accepted, report = validate_bank_txns(rows)
-                    bank_txns = [to_bank_txn(row) for row in accepted]
-                    counts["bank_txns"] = bank_repo.bulk_upsert(bank_txns)
+                    bank_records = [
+                        to_bank_txn(row).model_copy(update={"run_id": run_id})
+                        for row in accepted
+                    ]
+                    counts["bank_txns"] = bank_repo.bulk_upsert(bank_records)
                 if report.quarantined:
                     quarantine_repo.add_many(ingest_run_id, report.quarantined)
                     counts["quarantined"] += len(report.quarantined)
@@ -197,17 +205,17 @@ async def upload_dataset(
             status="completed",
         )
 
-        orders = order_repo.all()
-        txns = gateway_repo.all()
-        payouts = payout_repo.all()
-        bank_txns = bank_repo.all()
+        order_records = order_repo.for_run(run_id)
+        gateway_records = gateway_repo.for_run(run_id)
+        payout_records = payout_repo.for_run(run_id)
+        bank_records = bank_repo.for_run(run_id)
 
         ctx = ReconContext(
-            run_id=f"RUN-UPLOAD-{uuid4().hex[:12]}",
-            orders=orders,
-            gateway_txns=txns,
-            payouts=payouts,
-            bank_txns=bank_txns,
+            run_id=run_id,
+            orders=order_records,
+            gateway_txns=gateway_records,
+            payouts=payout_records,
+            bank_txns=bank_records,
         )
         result = ReconEngine().run_context(ctx)
 
@@ -221,6 +229,18 @@ async def upload_dataset(
 
         counts["matches"] = len(result.matches)
         counts["breaks"] = len(result.breaks)
+        result.run = result.run.model_copy(
+            update={
+                "counts": {
+                    **result.run.counts,
+                    "orders": counts["orders"],
+                    "gateway_txns": counts["gateway_txns"],
+                    "payouts": counts["payouts"],
+                    "bank_txns": counts["bank_txns"],
+                    "quarantined": counts["quarantined"],
+                }
+            }
+        )
 
         response = {
             "run_id": result.run.run_id,

@@ -90,6 +90,9 @@ class ReconEngine:
         residual_breaks = self._classify_residuals(ctx, unmatched)
         all_breaks.extend(residual_breaks)
 
+        all_matches = [match.model_copy(update={"run_id": ctx.run_id}) for match in all_matches]
+        all_breaks = [brk.model_copy(update={"run_id": ctx.run_id}) for brk in all_breaks]
+
         recon_run = ReconRun(
             run_id=ctx.run_id,
             started_at=datetime.now(UTC),

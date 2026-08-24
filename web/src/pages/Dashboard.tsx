@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { useClearingProof } from "../hooks";
+import { useClearingProof, useCurrentMetrics } from "../hooks";
 
 export default function Dashboard() {
   const [latestRunId, setLatestRunId] = useState<string | null>(null);
@@ -12,6 +12,7 @@ export default function Dashboard() {
   }, []);
 
   const proof = useClearingProof();
+  const metrics = useCurrentMetrics(latestRunId ?? undefined);
 
   if (!latestRunId) {
     return (
@@ -36,6 +37,9 @@ export default function Dashboard() {
     );
   }
 
+  if (metrics.isLoading) return <p className="text-sm text-ink-muted">Loading current reconciliation...</p>;
+  if (metrics.isError || !metrics.data) return <p className="text-sm text-sev-high">Current reconciliation metrics unavailable.</p>;
+
   return (
     <div className="mx-auto max-w-6xl space-y-8">
       <header>
@@ -44,18 +48,17 @@ export default function Dashboard() {
         <p className="mt-2 text-sm text-ink-muted">Latest run: {latestRunId}</p>
       </header>
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Records checked" value="—" />
-        <MetricCard label="Matched" value="—" />
-        <MetricCard label="Issues found" value="—" />
-        <MetricCard label="Money needing attention" value="—" />
+        <MetricCard label="Records checked" value={metrics.data.records_checked.toLocaleString()} />
+        <MetricCard label="Matched" value={metrics.data.matched.toLocaleString()} />
+        <MetricCard label="Issues found" value={metrics.data.issues_found.toLocaleString()} />
+        <MetricCard label="Money needing attention" value={formatMinor(metrics.data.money_needing_attention_minor, "INR")} />
       </section>
       <section className="grid gap-4 md:grid-cols-2">
         <div className="border border-border-subtle bg-surface p-5">
           <h2 className="text-sm font-medium">System evaluation</h2>
           <div className="mt-5 space-y-4 text-sm">
-            <MetricRow label="Accuracy" value="—" />
-            <MetricRow label="Coverage" value="—" />
-            <MetricRow label="False-positive rate" value="—" />
+            <MetricRow label="Match rate" value={`${(metrics.data.match_rate * 100).toFixed(1)}%`} />
+            <MetricRow label="Run status" value="Completed" />
           </div>
         </div>
         <div className="border border-border-subtle bg-surface p-5">

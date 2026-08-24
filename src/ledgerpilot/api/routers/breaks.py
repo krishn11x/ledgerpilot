@@ -37,6 +37,7 @@ _checkpointed_breaks: set[str] = set()
 
 @router.get("", summary="Query the exception queue")
 def list_breaks(
+    run_id: Annotated[str | None, Query()] = None,
     status: Annotated[BreakStatus | None, Query()] = None,
     break_type: Annotated[BreakType | None, Query()] = None,
     min_amount_minor: Annotated[int | None, Query(ge=0)] = None,
@@ -46,6 +47,7 @@ def list_breaks(
     """Paged, filtered queue ordered by severity then amount."""
     with session_scope() as session:
         items, total = BreakRepository(session).query(
+            run_id=run_id,
             status=status,
             break_type=break_type,
             min_amount_minor=min_amount_minor,

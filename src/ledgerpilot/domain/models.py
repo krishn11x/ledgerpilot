@@ -58,6 +58,7 @@ class Order(_Base):
     currency: str
     placed_at: datetime
     status: str
+    run_id: str | None = None
     # TODO: line items, tax breakdown, shipping, promised delivery date
 
 
@@ -78,6 +79,7 @@ class GatewayTxn(_Base):
     status: str  # captured | refunded | disputed | failed
     payout_id: str | None  # None => UNSETTLED candidate
     captured_at: datetime
+    run_id: str | None = None
     # TODO: payment method, card last4, RRN, arn, risk score
 
 
@@ -90,6 +92,7 @@ class PayoutBatch(_Base):
     currency: str
     settled_on: date
     utr: str | None  # bank reference, appears in narration
+    run_id: str | None = None
     # TODO: adjustments, reserve held, reserve released
 
 
@@ -107,6 +110,7 @@ class BankTxn(_Base):
     currency: str
     narration: str
     utr: str | None = None  # populated by ingest.normalize when parseable
+    run_id: str | None = None
     # TODO: balance after, branch code, instrument type
 
 
@@ -138,7 +142,7 @@ class Match(_Base):
     score_breakdown: dict[str, float] = Field(default_factory=dict)
     residual_minor: int = 0  # unexplained remainder, 0 for a clean match
     created_at: datetime
-    # TODO: run_id, superseded_by
+    run_id: str | None = None
 
 
 class Break(_Base):
@@ -157,6 +161,7 @@ class Break(_Base):
     narrative: str | None = None  # agent's root-cause explanation
     evidence: list[dict[str, Any]] = Field(default_factory=list)
     assignee: str | None = None
+    run_id: str | None = None
     # TODO: sla_due_at, resolution_note, linked journal_entry_id
 
 

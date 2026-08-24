@@ -28,10 +28,11 @@ export interface MetricsResponse {
 	macro_recall: number;
 }
 
-export function useBreaks() {
+export function useBreaks(runId?: string | null) {
 	return useQuery({
-		queryKey: queryKeys.breaks(),
-		queryFn: () => api.get<BreakListResponse>("/breaks?status=open&limit=50"),
+		queryKey: queryKeys.breaks({ runId }),
+		queryFn: () => api.get<BreakListResponse>(`/breaks?run_id=${encodeURIComponent(runId ?? "")}&status=open&limit=50`),
+		enabled: Boolean(runId),
 	});
 }
 
@@ -47,6 +48,23 @@ export function useMetrics(scenario = "baseline") {
 	return useQuery({
 		queryKey: queryKeys.metrics(scenario),
 		queryFn: () => api.get<MetricsResponse>(`/metrics?scenario=${scenario}`),
+	});
+}
+
+export interface CurrentMetricsResponse {
+	run_id: string;
+	records_checked: number;
+	matched: number;
+	issues_found: number;
+	money_needing_attention_minor: number;
+	match_rate: number;
+}
+
+export function useCurrentMetrics(runId: string | undefined) {
+	return useQuery({
+		queryKey: ["metrics", "current", runId],
+		queryFn: () => api.get<CurrentMetricsResponse>(`/metrics/current?run_id=${encodeURIComponent(runId ?? "")}`),
+		enabled: Boolean(runId),
 	});
 }
 
@@ -76,6 +94,22 @@ export function useDecideBreak() {
 	return useMutation({
 		mutationFn: ({ breakId, action }: { breakId: string; action: string }) =>
 			api.post(`/breaks/${breakId}/decision`, { action }),
-		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.breaks() }),
+		onSuccess: (_data, variables) => {
+			queryClient.invalidateQueries({ queryKey: ["breaks"] });
+			queryClient.invalidateQueries({ queryKey: queryKeys.breakDetail(variables.breakId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.ledgerEntries });
+			queryClient.invalidateQueries({ queryKey: queryKeys.audit });
+		},
+	});
+}
+
+export function useInvestigateBreak() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (breakId: string) => api.post(`/breaks/${breakId}/investigate`),
+		onSuccess: (_data, breakId) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.breakDetail(breakId) });
+			queryClient.invalidateQueries({ queryKey: ["breaks"] });
+		},
 	});
 }

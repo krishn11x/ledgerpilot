@@ -82,7 +82,7 @@ export const api = {
       if (body instanceof FormData) {
         init.body = body;
       } else {
-        init.body = JSON.stringify(body);
+        init.body = body as BodyInit;
       }
     }
     return request<T>(path, init);

@@ -140,6 +140,7 @@ class OrderRow(Base, TimestampMixin):
     __tablename__ = "orders"
 
     order_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     customer_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     gross_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
@@ -150,6 +151,7 @@ class OrderRow(Base, TimestampMixin):
     def from_domain(cls, record: Order) -> OrderRow:
         return cls(
             order_id=record.order_id,
+            run_id=record.run_id,
             customer_id=record.customer_id,
             gross_minor=record.gross_minor,
             currency=record.currency,
@@ -162,6 +164,7 @@ class OrderRow(Base, TimestampMixin):
         """Column mapping for bulk insert/update, bypassing ORM instantiation."""
         return {
             "order_id": record.order_id,
+            "run_id": record.run_id,
             "customer_id": record.customer_id,
             "gross_minor": record.gross_minor,
             "currency": record.currency,
@@ -177,6 +180,7 @@ class OrderRow(Base, TimestampMixin):
             currency=self.currency,
             placed_at=_as_utc(self.placed_at),
             status=self.status,
+            run_id=self.run_id,
         )
 
 
@@ -191,6 +195,7 @@ class GatewayTxnRow(Base, TimestampMixin):
     __tablename__ = "gateway_txns"
 
     txn_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     order_ref: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     gross_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     fee_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -211,6 +216,7 @@ class GatewayTxnRow(Base, TimestampMixin):
     def values(record: GatewayTxn) -> dict[str, Any]:
         return {
             "txn_id": record.txn_id,
+            "run_id": record.run_id,
             "order_ref": record.order_ref,
             "gross_minor": record.gross_minor,
             "fee_minor": record.fee_minor,
@@ -234,6 +240,7 @@ class GatewayTxnRow(Base, TimestampMixin):
             status=self.status,
             payout_id=self.payout_id,
             captured_at=_as_utc(self.captured_at),
+            run_id=self.run_id,
         )
 
 
@@ -243,6 +250,7 @@ class PayoutBatchRow(Base, TimestampMixin):
     __tablename__ = "payout_batches"
 
     payout_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     expected_net_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     txn_count: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
@@ -257,6 +265,7 @@ class PayoutBatchRow(Base, TimestampMixin):
     def values(record: PayoutBatch) -> dict[str, Any]:
         return {
             "payout_id": record.payout_id,
+            "run_id": record.run_id,
             "expected_net_minor": record.expected_net_minor,
             "txn_count": record.txn_count,
             "currency": record.currency,
@@ -272,6 +281,7 @@ class PayoutBatchRow(Base, TimestampMixin):
             currency=self.currency,
             settled_on=self.settled_on,
             utr=self.utr,
+            run_id=self.run_id,
         )
 
 
@@ -288,6 +298,7 @@ class BankTxnRow(Base, TimestampMixin):
     __tablename__ = "bank_txns"
 
     bank_txn_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     value_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     direction: Mapped[TxnDirection] = mapped_column(
@@ -305,6 +316,7 @@ class BankTxnRow(Base, TimestampMixin):
     def values(record: BankTxn) -> dict[str, Any]:
         return {
             "bank_txn_id": record.bank_txn_id,
+            "run_id": record.run_id,
             "value_date": record.value_date,
             "amount_minor": record.amount_minor,
             "direction": record.direction,
@@ -322,6 +334,7 @@ class BankTxnRow(Base, TimestampMixin):
             currency=self.currency,
             narration=self.narration,
             utr=self.utr,
+            run_id=self.run_id,
         )
 
 
@@ -424,6 +437,7 @@ class MatchRow(Base, TimestampMixin):
     __tablename__ = "matches"
 
     match_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     legs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     method: Mapped[MatchMethod] = mapped_column(
         _enum_column(MatchMethod, name="match_method"), nullable=False
@@ -439,6 +453,7 @@ class MatchRow(Base, TimestampMixin):
     def values(cls, record: Match) -> dict[str, Any]:
         return {
             "match_id": record.match_id,
+            "run_id": record.run_id,
             "legs": [leg.model_dump() for leg in record.legs],
             "method": record.method,
             "status": record.status,
@@ -457,6 +472,7 @@ class MatchRow(Base, TimestampMixin):
             score_breakdown=self.score_breakdown,
             residual_minor=self.residual_minor,
             created_at=_as_utc(self.created_at),
+            run_id=self.run_id,
         )
 
 
@@ -466,6 +482,7 @@ class BreakRow(Base, TimestampMixin):
     __tablename__ = "breaks"
 
     break_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     break_type: Mapped[BreakType] = mapped_column(
         _enum_column(BreakType, name="break_type_row"), nullable=False, index=True
     )
@@ -489,6 +506,7 @@ class BreakRow(Base, TimestampMixin):
     def values(cls, record: Break) -> dict[str, Any]:
         return {
             "break_id": record.break_id,
+            "run_id": record.run_id,
             "break_type": record.break_type,
             "severity": record.severity,
             "status": record.status,
@@ -518,6 +536,7 @@ class BreakRow(Base, TimestampMixin):
             narrative=self.narrative,
             evidence=self.evidence,
             assignee=self.assignee,
+            run_id=self.run_id,
         )
 
 

@@ -1,8 +1,9 @@
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../lib/api";
+import { useCurrentMetrics } from "../hooks";
 
 export default function Results() {
   const { runId } = useParams<{ runId: string }>();
@@ -19,34 +20,13 @@ export default function Results() {
     enabled: Boolean(runId),
   });
 
-  const metricsQuery = useQuery({
-    queryKey: ["metrics", "baseline"],
-    queryFn: () => api.get<{ auto_match_rate: number; false_positive_match_rate: number; value_unreconciled_minor: number; total_records: number; scenario: string }>("/metrics?scenario=baseline"),
-  });
-
-  const summary = useMemo(() => {
-    const counts = runQuery.data?.counts ?? {};
-    const totalRecords = Number(counts.records ?? counts.total ?? 0);
-    const matches = Number(counts.matches ?? 0);
-    const breaks = Number(counts.breaks ?? 0);
-    const matched = Math.max(0, matches);
-    const autoMatch = Number(metricsQuery.data?.auto_match_rate ?? 0);
-    const atRisk = Number(metricsQuery.data?.value_unreconciled_minor ?? 0);
-
-    return {
-      totalRecords,
-      matched,
-      exceptions: breaks,
-      amountAtRisk: atRisk,
-      autoMatchRate: autoMatch,
-    };
-  }, [metricsQuery.data, runQuery.data]);
+  const metricsQuery = useCurrentMetrics(runId);
 
   if (runQuery.isLoading || metricsQuery.isLoading) {
     return <p className="text-sm text-ink-muted">Loading reconciliation result…</p>;
   }
 
-  if (runQuery.isError || !runQuery.data) {
+  if (runQuery.isError || metricsQuery.isError || !runQuery.data || !metricsQuery.data) {
     return (
       <div className="mx-auto max-w-3xl space-y-4">
         <h1 className="text-3xl font-semibold tracking-tight">Result unavailable</h1>
@@ -73,11 +53,11 @@ export default function Results() {
       </header>
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <Stat label="Records processed" value={summary.totalRecords.toLocaleString()} />
-        <Stat label="Matched" value={summary.matched.toLocaleString()} />
-        <Stat label="Exceptions" value={summary.exceptions.toLocaleString()} />
-        <Stat label="Amount at risk" value={formatMinor(summary.amountAtRisk, "INR")} />
-        <Stat label="Auto-match rate" value={`${(summary.autoMatchRate * 100).toFixed(1)}%`} />
+        <Stat label="Records checked" value={metricsQuery.data.records_checked.toLocaleString()} />
+        <Stat label="Matched" value={metricsQuery.data.matched.toLocaleString()} />
+        <Stat label="Issues found" value={metricsQuery.data.issues_found.toLocaleString()} />
+        <Stat label="Money needing attention" value={formatMinor(metricsQuery.data.money_needing_attention_minor, "INR")} />
+        <Stat label="Match rate" value={`${(metricsQuery.data.match_rate * 100).toFixed(1)}%`} />
       </section>
 
       <section className="border border-border-subtle bg-surface p-5">

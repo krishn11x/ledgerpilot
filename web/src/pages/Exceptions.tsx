@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useBreaks, useDecideBreak } from "../hooks";
@@ -7,7 +8,9 @@ import { useBreaks, useDecideBreak } from "../hooks";
  * SKELETON: phase 7.
  */
 export default function Exceptions() {
-  const breaks = useBreaks();
+  const [latestRunId, setLatestRunId] = useState<string | null>(null);
+  useEffect(() => setLatestRunId(window.localStorage.getItem("ledgerpilot:latest-run")), []);
+  const breaks = useBreaks(latestRunId);
   const decide = useDecideBreak();
   if (breaks.isLoading) return <p className="text-sm text-ink-muted">Loading exception queue...</p>;
   if (breaks.isError || !breaks.data) return <p className="text-sm text-sev-high">Exception queue unavailable. Start a reconciliation run first.</p>;

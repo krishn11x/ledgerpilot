@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Query
 
 from ledgerpilot.api.errors import NotFoundError
-from ledgerpilot.evaluation.harness import run_evaluation
+from ledgerpilot.evaluation.harness import report_to_dict, run_evaluation
 from ledgerpilot.synth.scenarios import SCENARIOS
 
 router = APIRouter(prefix="/metrics", tags=["metrics"])
@@ -22,7 +22,7 @@ def get_metrics(
     if scenario not in SCENARIOS:
         raise NotFoundError(f"unknown scenario {scenario!r}")
     report = run_evaluation(scenario, with_agent=with_agent)
-    return report.__dict__
+    return report_to_dict(report)
 
 
 @router.get("/dashboard", summary="KPI summary for the dashboard")

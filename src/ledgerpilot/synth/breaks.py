@@ -12,6 +12,7 @@ than exposing it.
 
 from __future__ import annotations
 
+import json
 import random
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias
@@ -155,8 +156,23 @@ class BreakMix:
     narration_noise: float = 0.30  # degrades narration; tests extraction
 
     def total_break_rate(self) -> float:
-        """TODO: sum of genuine break rates, excluding noise and timing."""
-        raise NotImplementedError
+        """Return the declared rate of genuine breaks, excluding noise."""
+        return sum(
+            (
+                self.missing_in_gateway,
+                self.orphan_payment,
+                self.amount_mismatch,
+                self.short_payment,
+                self.fee_variance,
+                self.unsettled,
+                self.payout_mismatch,
+                self.duplicate_payment,
+                self.refund_unapplied,
+                self.chargeback,
+                self.fx_variance,
+                self.unidentified_credit,
+            )
+        )
 
 
 class BreakInjector:
@@ -483,5 +499,12 @@ class BreakInjector:
 
 
 def write_ground_truth(labels: Labels, path: str) -> None:
-    """TODO: persist the answer key as JSON alongside the dataset."""
-    raise NotImplementedError
+    """Persist the answer key as indented JSON alongside a dataset."""
+    from pathlib import Path
+
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps([label.to_json_dict() for label in labels], indent=2) + "\n",
+        encoding="utf-8",
+    )

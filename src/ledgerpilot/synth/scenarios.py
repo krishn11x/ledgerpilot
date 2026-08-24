@@ -7,12 +7,11 @@ regression tests (a match-rate drop on ``baseline`` fails CI).
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
 from ledgerpilot.config import SYNTHETIC_DIR
-from ledgerpilot.synth.breaks import BreakInjector, BreakMix
+from ledgerpilot.synth.breaks import BreakInjector, BreakMix, write_ground_truth
 from ledgerpilot.synth.generator import SyntheticGenerator, write_dataset
 
 
@@ -120,8 +119,7 @@ def materialize(
     written = write_dataset(mutated_ds, target_dir)
 
     gt_path = target_dir / "ground_truth.json"
-    gt_rows = [label.to_json_dict() for label in labels]
-    gt_path.write_text(json.dumps(gt_rows, indent=2) + "\n", encoding="utf-8")
+    write_ground_truth(labels, str(gt_path))
     written["ground_truth"] = gt_path
 
     return {k: str(v) for k, v in written.items()}

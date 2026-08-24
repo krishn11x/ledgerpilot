@@ -1,11 +1,25 @@
 # LedgerPilot
 
+## Overview
+
 LedgerPilot is an AI finance controller for autonomous payment reconciliation.
 It connects commerce orders, gateway transactions, payout batches, and bank
 statements, then separates deterministic matching from the residual cases that
 need human review or a LangGraph-assisted decision path.
 
-## What is working
+> Status: Demo Ready
+>
+> LedgerPilot is a feature-complete, reproducible local demo of an AI-assisted
+> payment reconciliation platform. The verified demo includes deterministic
+> reconciliation, LangGraph orchestration, human-in-the-loop decisions,
+> double-entry safeguards, audit trails, evaluation, authentication, and a
+> React dashboard.
+>
+> A hosted public deployment is not currently provided. Production deployment
+> would additionally require durable checkpoint storage, full identity
+> management, rate limiting, and production infrastructure.
+
+## Key capabilities
 
 - Deterministic reconciliation engine with tiered matching passes
 - Real LangGraph workflow for ambiguous residual cases
@@ -61,6 +75,8 @@ work to an LLM. LedgerPilot does neither. The design is deliberate:
 - the AI layer is reserved for ambiguous residuals and explanation
 - every decision is grounded in arithmetic and event history
 - policy gates prevent silent mis-matches from reaching the ledger
+- models used by the optional LLM integration are configurable; the core
+  reconciliation and evaluation paths do not require an external LLM service
 
 This creates a practical finance workflow: fast automation for the routine,
 human oversight for the edge cases, and evidence for every decision.
